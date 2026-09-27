@@ -91,6 +91,7 @@ async def handle_music_url_message(message: Message):
         total_tracks=entity.track_count,
         author=entity.author,
         cover_url=entity.cover_url,
+        raw_data=entity.raw_data,
     )
 
     # 1. Single track flow

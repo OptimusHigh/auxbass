@@ -45,6 +45,7 @@ class IngestionJob:
     uploaded_message_id: Optional[int] = None
     selected_urls: Optional[List[str]] = None
     custom_tracks: Optional[List[Dict[str, Any]]] = None
+    raw_data: Optional[Dict[str, Any]] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -112,6 +113,7 @@ class IngestionJobManager:
         cover_url: Optional[str] = None,
         selected_urls: Optional[List[str]] = None,
         custom_tracks: Optional[List[Dict[str, Any]]] = None,
+        raw_data: Optional[Dict[str, Any]] = None,
     ) -> IngestionJob:
         """Create and register a new pending job."""
         job_id = uuid.uuid4().hex
@@ -127,6 +129,7 @@ class IngestionJobManager:
             total_tracks=total_tracks,
             selected_urls=selected_urls,
             custom_tracks=custom_tracks,
+            raw_data=raw_data,
         )
 
         async with self._lock:

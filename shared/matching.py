@@ -1088,6 +1088,98 @@ def extract_version_markers(text: Optional[str]) -> Set[str]:
     return markers
 
 
+# Generic words inside version descriptors that do not uniquely identify the remixer/version
+GENERIC_VERSION_WORDS = {
+    'remix', 'refix', 'mix', 'edit', 'version', 'dub', 'bootleg', 'rework',
+    'flip', 'vip', 'remaster', 'deluxe', 'live', 'acoustic', 'instrumental',
+    'cover', 'orchestral', 'sped', 'speed', 'up', 'slowed', 'nightcore',
+    'daycore', 'session', 'official', 'audio', 'video'
+}
+
+VERSION_KEYWORDS_PATTERN = re.compile(
+    r'\b(remix|refix|re-fix|mix|edit|version|dub|bootleg|rework|flip|vip|remaster|deluxe|live|acoustic|instrumental|cover|orchestral|sped\s+up|speed\s+up|slowed|nightcore|daycore)\b',
+    re.IGNORECASE
+)
+
+
+def extract_version_detail(title: Optional[str]) -> str:
+    """
+    Extract specific normalized version or remix substring from a track title.
+
+    Examples:
+        "Sleepless (Loadstar Remix)" -> "loadstar remix"
+        "Sleepless - Xilent Remix" -> "xilent remix"
+        "Clint Eastwood (Ed Case/Sweetie Irie Refix)" -> "ed case sweetie irie refix"
+        "Around the World" -> ""
+    """
+    if not title:
+        return ""
+    # 1. Check parenthetical / bracketed content
+    for m in re.finditer(r'[\(\[]([^\(\)\[\]]+)[\)\]]', title):
+        content = m.group(1).strip()
+        if VERSION_KEYWORDS_PATTERN.search(content):
+            c = re.sub(r're-fix', 'refix', content, flags=re.IGNORECASE)
+            c = re.sub(r'[^\w\s]', ' ', c).lower()
+            return ' '.join(c.split())
+    # 2. Check trailing dash/hyphen
+    m = re.search(r'\s+[-–—]\s*(.+)$', title)
+    if m:
+        content = m.group(1).strip()
+        if VERSION_KEYWORDS_PATTERN.search(content):
+            c = re.sub(r're-fix', 'refix', content, flags=re.IGNORECASE)
+            c = re.sub(r'[^\w\s]', ' ', c).lower()
+            return ' '.join(c.split())
+    return ""
+
+
+def get_version_qualifier(detail: str) -> str:
+    """Extract qualifier words (e.g. remixer name, venue) excluding generic words."""
+    words = [w for w in detail.split() if w not in GENERIC_VERSION_WORDS]
+    return ' '.join(words)
+
+
+def are_version_details_compatible(title1: Optional[str], title2: Optional[str]) -> bool:
+    """
+    Check if version specifics (remix name, live venue, etc.) between two titles are compatible.
+
+    Returns True if:
+    - Neither track has a version (both are studio tracks).
+    - One is denoted as 'original mix' / 'album version' and the other is a studio track.
+    - Both have matching version details or qualifiers (e.g. 'Xilent Remix' vs 'Xilent Remix').
+    - One version is a generic descriptor (e.g. 'Live') and the other is specific ('Live at Wembley').
+
+    Returns False if:
+    - One track is a remix/live/edit and the other is not.
+    - Both have distinct specific qualifiers (e.g. 'Loadstar Remix' vs 'Xilent Remix').
+    """
+    v1 = extract_version_detail(title1)
+    v2 = extract_version_detail(title2)
+    if not v1 and not v2:
+        return True
+
+    orig_phrases = {'original mix', 'original version', 'album version', 'album mix'}
+    if (v1 in orig_phrases and not v2) or (v2 in orig_phrases and not v1):
+        return True
+
+    if bool(v1) != bool(v2):
+        return False
+
+    if v1 == v2:
+        return True
+
+    q1 = get_version_qualifier(v1)
+    q2 = get_version_qualifier(v2)
+    if not q1 or not q2:
+        return True
+
+    if q1 == q2 or q1 in q2 or q2 in q1:
+        return True
+
+    from difflib import SequenceMatcher
+    ratio = SequenceMatcher(None, q1, q2).ratio()
+    return ratio >= 0.75
+
+
 # Patterns to strip out promo channels, websites, bitrates, and rip tags
 METADATA_JUNK_PATTERNS = [
     # Telegram channels and usernames: @something, t.me/something

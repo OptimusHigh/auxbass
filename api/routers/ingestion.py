@@ -391,6 +391,7 @@ async def start_import(
         cover_url=cover_candidate,
         selected_urls=selected_urls,
         custom_tracks=custom_tracks,
+        raw_data=entity.raw_data,
     )
     if playlist_id:
         job.playlist_id = playlist_id

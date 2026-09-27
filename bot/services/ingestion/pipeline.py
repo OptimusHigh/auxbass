@@ -36,6 +36,8 @@ from shared.matching import (
     fuzzy_match_artist,
     fuzzy_match_title,
     extract_version_markers,
+    extract_version_detail,
+    are_version_details_compatible,
     is_bogus_album_name,
     sanitize_album_name,
 )
@@ -105,13 +107,20 @@ def _score_candidate(
     if t_markers != req_markers:
         return -1
 
+    # Specific version details compatibility check (distinguish Loadstar Remix vs Xilent Remix, etc.)
+    if not are_version_details_compatible(clean_title, t.title):
+        return -1
+
+    t_v = extract_version_detail(t.title)
+    req_v = extract_version_detail(clean_title)
+
     score = 0
     if t.title and clean_title and t.title.lower() == clean_title.lower():
         score = 100
     elif t_norm_title and norm_title and t_norm_title == norm_title:
-        score = 80
+        score = 85 if (t_v and req_v and t_v == req_v) else 80
     elif t_robust_title and robust_title and t_robust_title == robust_title:
-        score = 60
+        score = 85 if (t_v and req_v and t_v == req_v) else 60
     elif fuzzy_match_title(clean_title, t_clean_title) >= 0.75:
         score = 40
     else:
@@ -316,6 +325,7 @@ class IngestionPipeline:
                 author=job.author,
                 cover_url=job.cover_url,
                 track_count=job.total_tracks,
+                raw_data=getattr(job, "raw_data", None),
             )
 
             # 1. Fetch full tracklist (or use pre-parsed custom tracks from Exportify CSV or Likes batch)

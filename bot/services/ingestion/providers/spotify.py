@@ -136,6 +136,19 @@ class SpotifyProvider(BaseMusicProvider):
 
     async def fetch_tracklist(self, entity: SourceEntity) -> List[TrackMetadata]:
         """Fetch list of all tracks from the Spotify entity."""
+        if not entity.raw_data and entity.url:
+            try:
+                resolved = await self.resolve_entity(entity.url)
+                entity.raw_data = resolved.raw_data
+                if not entity.title:
+                    entity.title = resolved.title
+                if not entity.author:
+                    entity.author = resolved.author
+                if not entity.cover_url:
+                    entity.cover_url = resolved.cover_url
+            except Exception as e:
+                logger.warning(f"[Spotify] Could not re-resolve entity metadata for {entity.url}: {e}")
+
         raw = entity.raw_data or {}
 
         if entity.entity_type == EntityType.TRACK:

@@ -21,6 +21,7 @@ from shared.matching import (
     fuzzy_match_artist,
     fuzzy_match_title,
     extract_version_markers,
+    are_version_details_compatible,
     ARTIST_MATCH_THRESHOLD,
     TITLE_MATCH_THRESHOLD,
 )
@@ -302,11 +303,11 @@ class AudioResolver:
             version_penalty = 0.0
             version_bonus = 0.0
 
-            if target_markers != cand_markers:
-                # Version mismatch (e.g. user wants studio, candidate is live, or vice-versa)
+            if target_markers != cand_markers or not are_version_details_compatible(target.title, cand_title):
+                # Version mismatch (e.g. user wants studio, candidate is live, or vice-versa, or different remix)
                 version_penalty = 250.0
             else:
-                # Both versions agree (e.g. both are live, or both are studio)
+                # Both versions agree (e.g. both are live, or both are studio, or same remix)
                 if target_markers:
                     version_bonus -= 15.0
 

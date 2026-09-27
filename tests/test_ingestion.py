@@ -1025,6 +1025,84 @@ def test_pipeline_score_candidate_distinguishes_live_and_studio():
     assert score_live > 0, "Live request should match live recording in DB"
 
 
+def test_pipeline_score_candidate_distinguishes_different_remixes():
+    from bot.services.ingestion.pipeline import _score_candidate, _robust_norm_title
+    from shared.matching import clean_track_metadata, normalize_artist, normalize_title
+    from shared.models import Track
+
+    # DB track is Loadstar Remix
+    loadstar_track = Track(
+        id=511,
+        title="Sleepless (Loadstar Remix)",
+        artist="Excision",
+        normalized_artist="excision",
+        duration=254,
+    )
+    # DB track is Xilent Remix
+    xilent_track = Track(
+        id=4180,
+        title="Sleepless(Xilent Remix)",
+        artist="Excision & Savvy",
+        normalized_artist="excision",
+        duration=308,
+    )
+
+    clean_t, clean_a = clean_track_metadata("Sleepless - Xilent Remix", "Excision, Savvy, Xilent")
+    norm_t = normalize_title(clean_t)
+    norm_a = normalize_artist(clean_a)
+    rob_t = _robust_norm_title(clean_t)
+
+    # 1. Target is Xilent Remix -> Must NOT match Loadstar Remix (even if duration is missing/None)
+    score_wrong_remix_nodur = _score_candidate(
+        loadstar_track,
+        clean_title=clean_t,
+        clean_artist=clean_a,
+        norm_title=norm_t,
+        norm_artist=norm_a,
+        robust_title=rob_t,
+        duration=None,
+    )
+    assert score_wrong_remix_nodur == -1, "Different remix must be rejected even when duration is None"
+
+    # 2. Target is Xilent Remix with duration -> Must NOT match Loadstar Remix
+    score_wrong_remix = _score_candidate(
+        loadstar_track,
+        clean_title=clean_t,
+        clean_artist=clean_a,
+        norm_title=norm_t,
+        norm_artist=norm_a,
+        robust_title=rob_t,
+        duration=308,
+    )
+    assert score_wrong_remix == -1, "Different remix must be rejected"
+
+    # 3. Target is Xilent Remix -> MUST match Xilent Remix in DB
+    score_correct_remix = _score_candidate(
+        xilent_track,
+        clean_title=clean_t,
+        clean_artist=clean_a,
+        norm_title=norm_t,
+        norm_artist=norm_a,
+        robust_title=rob_t,
+        duration=308,
+    )
+    assert score_correct_remix >= 80, "Matching remix must be accepted with high score"
+
+
+def test_are_version_details_compatible():
+    from shared.matching import are_version_details_compatible, extract_version_detail
+
+    assert are_version_details_compatible("Sleepless (Loadstar Remix)", "Sleepless - Xilent Remix") is False
+    assert are_version_details_compatible("Sleepless(Xilent Remix)", "Sleepless - Xilent Remix") is True
+    assert are_version_details_compatible("Sleepless - Xilent Remix", "Sleepless (Xilent Remix)") is True
+    assert are_version_details_compatible("Clint Eastwood - Ed Case/Sweetie Irie Re-Fix", "Clint Eastwood (Ed Case/Sweetie Irie Refix)") is True
+    assert are_version_details_compatible("Clint Eastwood (Ed Case Remix)", "Clint Eastwood (Phi Life Cypher Version)") is False
+    assert are_version_details_compatible("Midnight City - Radio Edit", "Midnight City (Radio Edit)") is True
+    assert are_version_details_compatible("Midnight City (Radio Edit)", "Midnight City (Club Mix)") is False
+    assert are_version_details_compatible("Around the World", "Around the World") is True
+
+
+
 @pytest.mark.asyncio
 async def test_upload_playlist_cover_to_telegram_channel():
     """Test that playlist cover is downloaded and sent to user's Telegram channel."""
