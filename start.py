@@ -23,6 +23,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from shared.config import get_settings
+from shared.bot_factory import create_bot
 from shared.database import init_db, close_db
 from bot.handlers.menu import router as menu_router
 from bot.handlers.inline import router as inline_router
@@ -68,10 +69,7 @@ async def run_bot():
     while True:
         bot = None
         try:
-            bot = Bot(
-                token=settings.bot_token,
-                default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-            )
+            bot = create_bot()
             
             try:
                 me = await bot.get_me()
@@ -129,6 +127,8 @@ async def main():
     logger.info(f"Домен: {settings.webapp_url}")
     logger.info(f"База данных: {settings.database_url}")
     logger.info(f"Порт: {port}")
+    if settings.proxy_url:
+        logger.info(f"🌐 Прокси: {settings.proxy_url.split('@')[-1] if '@' in settings.proxy_url else settings.proxy_url}")
     
     # Инициализация состояния приложения
     fastapi_app.state.bot_online = False

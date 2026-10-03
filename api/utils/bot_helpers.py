@@ -13,6 +13,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 from shared.config import get_settings
+from shared.bot_factory import create_bot
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -27,10 +28,7 @@ def get_bot() -> Bot:
     """Get or create shared bot instance for image/file proxy operations."""
     global _image_bot
     if _image_bot is None:
-        _image_bot = Bot(
-            token=settings.bot_token,
-            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-        )
+        _image_bot = create_bot()
     return _image_bot
 
 
@@ -75,6 +73,7 @@ async def get_http_session() -> aiohttp.ClientSession:
         _http_session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
+            trust_env=True,
         )
     return _http_session
 

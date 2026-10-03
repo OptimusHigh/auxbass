@@ -18,18 +18,29 @@ export YARL_NO_EXTENSIONS=1
 export MULTIDICT_NO_EXTENSIONS=1
 export FROZENLIST_NO_EXTENSIONS=1
 export AIOHTTP_NO_EXTENSIONS=1
+# Load and export proxy if configured
+if [ -f ".env" ]; then
+    PROXY_VAL=$(grep -E '^(PROXY_URL|HTTP_PROXY|HTTPS_PROXY)=' .env | head -n 1 | cut -d '=' -f2- | tr -d '"' | tr -d "'")
+    if [ -n "$PROXY_VAL" ]; then
+        export HTTP_PROXY="$PROXY_VAL"
+        export HTTPS_PROXY="$PROXY_VAL"
+        export http_proxy="$PROXY_VAL"
+        export https_proxy="$PROXY_VAL"
+    fi
+fi
+
 
 # Allow git operations in Docker container directory
 git config --global --add safe.directory "*" 2>/dev/null || true
 git config --global init.defaultBranch main 2>/dev/null || true
 
 # 1. Update repository from Git
-DEFAULT_REPO="https://github.com/ganjamonsta/auxbass.git"
+DEFAULT_REPO="https://github.com/OptimusHigh/auxbass.git"
 
 if [ -n "$GITHUB_TOKEN" ]; then
-    REPO_URL="https://${GITHUB_TOKEN}@github.com/ganjamonsta/auxbass.git"
+    REPO_URL="https://${GITHUB_TOKEN}@github.com/OptimusHigh/auxbass.git"
 elif [ -n "$GIT_TOKEN" ]; then
-    REPO_URL="https://${GIT_TOKEN}@github.com/ganjamonsta/auxbass.git"
+    REPO_URL="https://${GIT_TOKEN}@github.com/OptimusHigh/auxbass.git"
 else
     REPO_URL="${GIT_ADDRESS:-$DEFAULT_REPO}"
 fi
@@ -86,7 +97,7 @@ fi
 
 # Priority 2: Fallback to curl + tar if Python script was missing or failed
 if [ "$DOWNLOADED" -eq 0 ]; then
-    TAR_URL="https://github.com/ganjamonsta/auxbass/releases/latest/download/webapp-dist.tar.gz"
+    TAR_URL="https://github.com/OptimusHigh/auxbass/releases/latest/download/webapp-dist.tar.gz"
     TEMP_TAR="/tmp/webapp-dist.tar.gz"
     if curl -fsSL --connect-timeout 15 --max-time 90 -L "$TAR_URL" -o "$TEMP_TAR" && [ -s "$TEMP_TAR" ]; then
         echo "📦 Распаковка актуальной сборки WebApp из GitHub Releases (curl)..."

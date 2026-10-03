@@ -15,6 +15,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import ExceptionTypeFilter
 
 from shared.config import get_settings
+from shared.bot_factory import create_bot
 from shared.database import init_db, close_db
 
 from bot.handlers.menu import router as menu_router
@@ -53,10 +54,7 @@ async def main():
     )
     
     # Initialize bot
-    bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
+    bot = create_bot()
 
     # Detect bot username if not set
     try:

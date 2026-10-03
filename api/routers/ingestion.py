@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from shared.config import get_settings
+from shared.bot_factory import create_bot
 from shared.database import get_session, get_db
 from shared.models import (
     User, Track, UserLibrary, AlbumTrack, Playlist, PlaylistTrack, LibrarySource,
@@ -229,7 +230,7 @@ def _get_active_bot() -> Bot:
     import api.main
     if getattr(api.main, "api_bot", None):
         return api.main.api_bot
-    return Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    return create_bot()
 
 
 async def _ensure_user_in_db(user: TelegramUser):

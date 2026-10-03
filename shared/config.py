@@ -97,4 +97,11 @@ def get_settings() -> Settings:
                 stacklevel=2
             )
     
+    if settings.proxy_url:
+        p = settings.proxy_url.strip()
+        os.environ.setdefault("HTTP_PROXY", p)
+        os.environ.setdefault("HTTPS_PROXY", p)
+        os.environ.setdefault("http_proxy", p)
+        os.environ.setdefault("https_proxy", p)
+    
     return settings

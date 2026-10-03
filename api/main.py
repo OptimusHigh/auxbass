@@ -28,6 +28,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
 from shared.config import get_settings
+from shared.bot_factory import create_bot
 from shared.database import init_db, close_db
 
 from bot.services.channels import init_channel_service, get_channel_service, start_channel_service, stop_channel_service
@@ -178,10 +179,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     
     # Initialize bot for channel service
-    api_bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
+    api_bot = create_bot()
     try:
         me = await api_bot.get_me()
         if me.username:

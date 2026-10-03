@@ -16,6 +16,18 @@ export YARL_NO_EXTENSIONS=1
 export MULTIDICT_NO_EXTENSIONS=1
 export FROZENLIST_NO_EXTENSIONS=1
 export AIOHTTP_NO_EXTENSIONS=1
+# Load and export proxy if configured
+if [ -f ".env" ]; then
+    PROXY_VAL=$(grep -E '^(PROXY_URL|HTTP_PROXY|HTTPS_PROXY)=' .env | head -n 1 | cut -d '=' -f2- | tr -d '"' | tr -d "'")
+    if [ -n "$PROXY_VAL" ]; then
+        export HTTP_PROXY="$PROXY_VAL"
+        export HTTPS_PROXY="$PROXY_VAL"
+        export http_proxy="$PROXY_VAL"
+        export https_proxy="$PROXY_VAL"
+        echo "🌐 Using Proxy from .env: ${PROXY_VAL##*@}"
+    fi
+fi
+
 
 # Allow git operations in Docker container directory
 git config --global --add safe.directory "*" 2>/dev/null || true

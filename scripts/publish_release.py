@@ -1,7 +1,7 @@
 """
 TG Player - WebApp Release Publisher
 Скрипт для сборки и загрузки WebApp релиза напрямую в GitHub Releases:
-https://github.com/ganjamonsta/auxbass/releases
+https://github.com/OptimusHigh/auxbass/releases
 """
 import os
 import re
@@ -44,7 +44,7 @@ def get_git_repo() -> tuple[str, str]:
             return match.group(1), match.group(2)
     except Exception:
         pass
-    return "ganjamonsta", "auxbass"
+    return "OptimusHigh", "auxbass"
 
 
 def ensure_archive() -> bool:

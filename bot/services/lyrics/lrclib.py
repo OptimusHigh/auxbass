@@ -22,7 +22,7 @@ class LRCLIBClient:
     """LRCLIB API client for lyrics lookup"""
     
     BASE_URL = "https://lrclib.net/api"
-    USER_AGENT = "TGPlayer/2.0 (https://github.com/ganjamonsta/auxbass)"
+    USER_AGENT = "TGPlayer/2.0 (https://github.com/OptimusHigh/auxbass)"
     
     # Rate limiting
     RATE_LIMIT_DELAY = 0.2  # 200ms between requests

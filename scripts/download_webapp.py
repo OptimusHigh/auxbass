@@ -19,7 +19,7 @@ if hasattr(sys.stderr, "reconfigure"):
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT_DIR / "webapp" / "dist"
 VERSION_FILE = DIST_DIR / "version.json"
-RELEASE_URL = "https://github.com/ganjamonsta/auxbass/releases/latest/download/webapp-dist.tar.gz"
+RELEASE_URL = "https://github.com/OptimusHigh/auxbass/releases/latest/download/webapp-dist.tar.gz"
 
 
 def get_current_build_id() -> str | None:
