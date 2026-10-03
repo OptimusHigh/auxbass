@@ -1,6 +1,7 @@
 # Telegram Bot
 aiogram>=3.4.0
 aiohttp>=3.9.0,<3.11  # aiohttp 3.14.x causes segfault on Python 3.11.4 in container
+aiohttp-socks>=0.8.0
 
 # API
 fastapi>=0.109.0
