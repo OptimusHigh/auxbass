@@ -12,7 +12,7 @@ import time
 from typing import Optional, Dict, List, Any
 import aiohttp
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,8 @@ class LastFmClient:
             timeout = aiohttp.ClientTimeout(total=10)
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
-                headers={"User-Agent": self.USER_AGENT}
+                headers={"User-Agent": self.USER_AGENT},
+                trust_env=True,
             )
         return self._session
     
@@ -84,7 +85,8 @@ class LastFmClient:
         }
         
         try:
-            async with session.get(self.BASE_URL, params=request_params) as response:
+            proxy = get_proxy_url()
+            async with session.get(self.BASE_URL, params=request_params, proxy=proxy) as response:
                 if response.status == 200:
                     data = await response.json()
                     # Check for API error

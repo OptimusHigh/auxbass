@@ -10,6 +10,8 @@ import time
 from typing import Optional, Dict, List, Any
 import aiohttp
 
+from shared.config import get_proxy_url
+
 from shared.matching import (
     clean_for_search,
     normalize_artist,
@@ -42,7 +44,8 @@ class DeezerClient:
             timeout = aiohttp.ClientTimeout(total=10)
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
-                headers={"User-Agent": self.USER_AGENT}
+                headers={"User-Agent": self.USER_AGENT},
+                trust_env=True,
             )
         return self._session
     
@@ -67,7 +70,8 @@ class DeezerClient:
         url = f"{self.BASE_URL}/{endpoint}"
         
         try:
-            async with session.get(url, params=params) as response:
+            proxy = get_proxy_url()
+            async with session.get(url, params=params, proxy=proxy) as response:
                 if response.status == 200:
                     data = await response.json()
                     # Check for API error

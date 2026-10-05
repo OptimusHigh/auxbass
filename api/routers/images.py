@@ -9,7 +9,7 @@ import aiohttp
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.images import crop_image_to_square
 from api.utils.bot_helpers import get_bot as _get_bot, close_bot as close_image_bot, get_http_session
 
@@ -69,9 +69,10 @@ async def proxy_external_image(url: str = Query(..., description="External image
         "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
     }
 
+    proxy = get_proxy_url()
     try:
         timeout = aiohttp.ClientTimeout(total=10, connect=5)
-        async with session.get(url, headers=headers, timeout=timeout) as resp:
+        async with session.get(url, headers=headers, timeout=timeout, proxy=proxy) as resp:
             if resp.status != 200:
                 # If YouTube thumbnail (e.g. maxresdefault.jpg or signed sqp URL) failed with 404, fallback to hqdefault.jpg
                 if resp.status == 404 and "i.ytimg.com" in url:
@@ -81,7 +82,7 @@ async def proxy_external_image(url: str = Query(..., description="External image
                         fallback_yt_url = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
                         if fallback_yt_url != url:
                             try:
-                                async with session.get(fallback_yt_url, headers=headers, timeout=timeout) as fb_resp:
+                                async with session.get(fallback_yt_url, headers=headers, timeout=timeout, proxy=proxy) as fb_resp:
                                     if fb_resp.status == 200:
                                         content = await fb_resp.read()
                                         try:

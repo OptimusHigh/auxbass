@@ -14,7 +14,7 @@ from aiogram.types import ErrorEvent
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import ExceptionTypeFilter
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.bot_factory import create_bot
 from shared.database import init_db, close_db
 
@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 async def main():
     """Main entry point"""
     settings = get_settings()
+    proxy = get_proxy_url()
+    if proxy:
+        logger.info(f"🌐 Прокси активен: {proxy.split('@')[-1] if '@' in proxy else proxy}")
+    else:
+        logger.warning("⚠️ Прокси не настроен! Сервисы Spotify, YouTube и Last.fm могут быть недоступны в РФ. Добавьте PROXY_URL в .env")
     
     # Initialize database
     logger.info("Initializing database...")

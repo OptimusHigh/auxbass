@@ -15,7 +15,7 @@ import aiohttp
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.matching import (
     clean_track_metadata,
     fuzzy_match_artist,
@@ -46,8 +46,9 @@ class AudioResolver:
             "no_warnings": True,
             "socket_timeout": settings.ytdlp_timeout,
         }
-        if settings.proxy_url:
-            opts["proxy"] = settings.proxy_url.strip()
+        proxy = get_proxy_url()
+        if proxy:
+            opts["proxy"] = proxy
         if extra:
             opts.update(extra)
         return opts
@@ -67,6 +68,14 @@ class AudioResolver:
         download it at 320kbps MP3 (or 192kbps 30s chunk), and tag it with original metadata and cover.
         Tries SoundCloud candidates with retry loop, then falls back to YouTube Music.
         """
+        clean_title = (track_meta.title or "").strip().lower()
+        clean_artist = (track_meta.artist or "").strip().lower()
+        if clean_title in ("spotify item", "unknown track", "") or clean_artist in ("artist", "unknown artist", ""):
+            raise ValueError(
+                f"Невозможно подобрать аудио: некорректные метаданные '{track_meta.artist} - {track_meta.title}'. "
+                f"Проверьте настройки прокси (PROXY_URL в .env) для корректного получения информации о треке."
+            )
+
         os.makedirs(temp_dir, exist_ok=True)
         exclude_set = set(exclude_urls or set())
         if track_meta.url:
@@ -182,8 +191,9 @@ class AudioResolver:
         if track_meta.cover_url:
             cover_path = os.path.join(temp_dir, "cover.jpg")
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(track_meta.cover_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                proxy = get_proxy_url()
+                async with aiohttp.ClientSession(trust_env=True) as session:
+                    async with session.get(track_meta.cover_url, timeout=aiohttp.ClientTimeout(total=10), proxy=proxy) as resp:
                         if resp.status == 200:
                             content = await resp.read()
                             with open(cover_path, "wb") as f:

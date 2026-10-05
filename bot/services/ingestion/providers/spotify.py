@@ -13,6 +13,7 @@ from typing import Optional, List, Tuple, Dict, Any, Callable
 
 import aiohttp
 
+from shared.config import get_proxy_url
 from shared.matching import clean_track_metadata
 from ..base import (
     BaseMusicProvider,
@@ -49,6 +50,24 @@ class SpotifyProvider(BaseMusicProvider):
         eid = m.group(2) or m.group(4)
         return etype, eid
 
+    async def _fetch_oembed_data(self, entity_type: str, entity_id: str) -> dict:
+        """Fallback fetch from public Spotify oEmbed API."""
+        target_url = f"https://open.spotify.com/{entity_type}/{entity_id}"
+        oembed_url = f"https://open.spotify.com/oembed?url={target_url}"
+        headers = {
+            "User-Agent": self.USER_AGENT,
+            "Accept": "application/json",
+        }
+        proxy = get_proxy_url()
+        try:
+            async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
+                async with session.get(oembed_url, timeout=aiohttp.ClientTimeout(total=10), proxy=proxy) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+        except Exception as e:
+            logger.debug(f"[Spotify] oEmbed fallback failed for {target_url}: {e}")
+        return {}
+
     async def _fetch_embed_data(self, entity_type: str, entity_id: str) -> dict:
         """Fetch and extract __NEXT_DATA__ JSON from public Spotify embed page."""
         embed_url = f"https://open.spotify.com/embed/{entity_type}/{entity_id}"
@@ -57,9 +76,10 @@ class SpotifyProvider(BaseMusicProvider):
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
         }
+        proxy = get_proxy_url()
 
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(embed_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
+            async with session.get(embed_url, timeout=aiohttp.ClientTimeout(total=15), proxy=proxy) as resp:
                 if resp.status == 404:
                     raise ValueError(f"Spotify {entity_type} '{entity_id}' не найден (404).")
                 if resp.status != 200:
@@ -95,9 +115,14 @@ class SpotifyProvider(BaseMusicProvider):
         else:
             raise ValueError(f"Тип сущности Spotify '{etype_str}' пока не поддерживается.")
 
-        entity_data = await self._fetch_embed_data(etype_str, eid)
+        clean_url = f"https://open.spotify.com/{etype_str}/{eid}"
+        entity_data = {}
+        try:
+            entity_data = await self._fetch_embed_data(etype_str, eid)
+        except Exception as embed_err:
+            logger.warning(f"[Spotify] Embed fetch failed for {clean_url}: {embed_err}")
 
-        title = entity_data.get("title") or entity_data.get("name") or "Spotify Item"
+        title = entity_data.get("title") or entity_data.get("name")
         author = None
         artists = entity_data.get("artists") or []
         if artists:
@@ -105,7 +130,6 @@ class SpotifyProvider(BaseMusicProvider):
         elif entity_data.get("subtitle"):
             author = entity_data.get("subtitle")
 
-        # Extract best cover artwork
         cover_url = None
         images = (
             entity_data.get("visualIdentity", {}).get("image")
@@ -114,14 +138,35 @@ class SpotifyProvider(BaseMusicProvider):
             or []
         )
         if isinstance(images, list) and images:
-            # Pick largest
             sorted_imgs = sorted(images, key=lambda x: x.get("maxWidth") or x.get("width") or 0, reverse=True)
             cover_url = sorted_imgs[0].get("url")
 
+        # Fallback to oEmbed if embed page returned empty or incomplete data
+        if not title or title.strip() == "Spotify Item" or (etype == EntityType.TRACK and not author):
+            oembed_data = await self._fetch_oembed_data(etype_str, eid)
+            if oembed_data:
+                if not title or title.strip() == "Spotify Item":
+                    title = oembed_data.get("title")
+                if not cover_url and oembed_data.get("thumbnail_url"):
+                    cover_url = oembed_data.get("thumbnail_url")
+                if not entity_data:
+                    entity_data = {
+                        "title": title,
+                        "name": title,
+                        "id": eid,
+                    }
+
+        # Strict validation: never allow dummy fallbacks to silently leak into download engine
+        if not title or title.strip().lower() in ("spotify item", "unknown"):
+            proxy_hint = f" (прокси: {get_proxy_url()})" if get_proxy_url() else " (прокси НЕ настроен, добавьте PROXY_URL в .env)"
+            raise ValueError(f"Не удалось извлечь название трека из Spotify{proxy_hint}. Проверьте доступ к Spotify.")
+
+        if etype == EntityType.TRACK and (not author or author.strip().lower() in ("artist", "unknown")):
+            proxy_hint = f" (прокси: {get_proxy_url()})" if get_proxy_url() else " (прокси НЕ настроен)"
+            raise ValueError(f"Не удалось определить исполнителя трека из Spotify '{title}'{proxy_hint}.")
+
         track_list = entity_data.get("trackList") or []
         track_count = len(track_list) if etype != EntityType.TRACK else 1
-
-        clean_url = f"https://open.spotify.com/{etype_str}/{eid}"
 
         return SourceEntity(
             provider_name=self.name,
@@ -153,8 +198,12 @@ class SpotifyProvider(BaseMusicProvider):
 
         if entity.entity_type == EntityType.TRACK:
             title = raw.get("title") or raw.get("name") or entity.title
+            if not title or title.strip().lower() in ("spotify item", "unknown"):
+                raise ValueError("Некорректное название трека Spotify.")
             artists = raw.get("artists") or []
-            artist_name = ", ".join(a.get("name") for a in artists if a.get("name")) if artists else entity.author or "Artist"
+            artist_name = ", ".join(a.get("name") for a in artists if a.get("name")) if artists else entity.author
+            if not artist_name or artist_name.strip().lower() in ("artist", "unknown"):
+                raise ValueError(f"Некорректный исполнитель трека Spotify: '{title}'.")
             dur_ms = raw.get("duration") or 0
             duration = int(dur_ms / 1000) if dur_ms else None
 

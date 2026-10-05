@@ -13,7 +13,7 @@ from typing import Optional, List, Dict, Any, Tuple, Callable
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from ..base import (
     BaseMusicProvider, SourceEntity, TrackMetadata, DownloadedAudio, EntityType,
     calculate_preview_range,
@@ -123,8 +123,9 @@ class SoundCloudProvider(BaseMusicProvider):
             "no_warnings": True,
             "socket_timeout": settings.ytdlp_timeout,
         }
-        if settings.proxy_url:
-            opts["proxy"] = settings.proxy_url.strip()
+        proxy = get_proxy_url()
+        if proxy:
+            opts["proxy"] = proxy
         if extra:
             opts.update(extra)
         return opts
@@ -465,8 +466,9 @@ class SoundCloudProvider(BaseMusicProvider):
         if track_meta.cover_url:
             cover_path = os.path.join(temp_dir, "cover.jpg")
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(track_meta.cover_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                proxy = get_proxy_url()
+                async with aiohttp.ClientSession(trust_env=True) as session:
+                    async with session.get(track_meta.cover_url, timeout=aiohttp.ClientTimeout(total=10), proxy=proxy) as resp:
                         if resp.status == 200:
                             content = await resp.read()
                             with open(cover_path, "wb") as f:
@@ -584,12 +586,15 @@ class SoundCloudProvider(BaseMusicProvider):
                 return cached_results[:limit]
 
         def _search():
+            proxy = get_proxy_url()
             ydl_opts = {
                 "quiet": True,
                 "no_warnings": True,
                 "extract_flat": True,
                 "skip_download": True,
             }
+            if proxy:
+                ydl_opts["proxy"] = proxy
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(f"scsearch{limit}:{clean_query}", download=False)
 
@@ -661,7 +666,10 @@ class SoundCloudProvider(BaseMusicProvider):
             return self._cached_client_id
 
         def _discover():
+            proxy = get_proxy_url()
             ydl_opts = {"quiet": True, "no_warnings": True}
+            if proxy:
+                ydl_opts["proxy"] = proxy
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ie = yt_dlp.extractor.soundcloud.SoundcloudUserIE(ydl)
                 ie.initialize()
@@ -700,9 +708,10 @@ class SoundCloudProvider(BaseMusicProvider):
 
         target_url = f"https://soundcloud.com/{permalink}"
         api_url = f"https://api-v2.soundcloud.com/resolve?url={target_url}&client_id={client_id}"
+        proxy = get_proxy_url()
 
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(api_url) as resp:
+        async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
+            async with session.get(api_url, proxy=proxy) as resp:
                 if resp.status == 404:
                     raise ValueError(f"Пользователь SoundCloud '{permalink}' не найден.")
                 if resp.status != 200:
@@ -756,8 +765,9 @@ class SoundCloudProvider(BaseMusicProvider):
 
             req_url = f"https://api-v2.soundcloud.com/users/{user_id}/likes?limit={limit}&client_id={client_id}"
 
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(req_url) as resp:
+        proxy = get_proxy_url()
+        async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
+            async with session.get(req_url, proxy=proxy) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ValueError(f"SoundCloud likes error ({resp.status}): {text[:100]}")
@@ -851,8 +861,9 @@ class SoundCloudProvider(BaseMusicProvider):
 
             req_url = f"https://api-v2.soundcloud.com/users/{user_id}/tracks?limit={limit}&client_id={client_id}"
 
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(req_url) as resp:
+        proxy = get_proxy_url()
+        async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
+            async with session.get(req_url, proxy=proxy) as resp:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ValueError(f"SoundCloud user tracks error ({resp.status}): {text[:100]}")
@@ -975,12 +986,15 @@ class SoundCloudProvider(BaseMusicProvider):
                 "created_at": p.get("created_at"),
             }
 
-        async with aiohttp.ClientSession(headers=headers) as session:
+        raw_target = str(playlist_id_or_url).strip()
+        proxy = get_proxy_url()
+
+        async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
             # 1. Created playlists
             if playlist_type in ("all", "created"):
                 created_url = f"https://api-v2.soundcloud.com/users/{user_id}/playlists?limit={limit}&client_id={client_id}"
                 try:
-                    async with session.get(created_url) as resp:
+                    async with session.get(created_url, proxy=proxy) as resp:
                         if resp.status == 200:
                             c_data = await resp.json()
                             for item in c_data.get("collection") or []:
@@ -994,7 +1008,7 @@ class SoundCloudProvider(BaseMusicProvider):
             if playlist_type in ("all", "liked"):
                 liked_url = next_href or f"https://api-v2.soundcloud.com/users/{user_id}/playlist_likes?limit={limit}&client_id={client_id}"
                 try:
-                    async with session.get(liked_url) as resp:
+                    async with session.get(liked_url, proxy=proxy) as resp:
                         if resp.status == 200:
                             l_data = await resp.json()
                             next_cursor = l_data.get("next_href")
@@ -1029,19 +1043,20 @@ class SoundCloudProvider(BaseMusicProvider):
             headers["Authorization"] = f"OAuth {auth_token.strip()}"
 
         raw_target = str(playlist_id_or_url).strip()
+        proxy = get_proxy_url()
 
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
             if raw_target.startswith("http"):
                 # Resolve URL
                 resolve_url = f"https://api-v2.soundcloud.com/resolve?url={raw_target}&client_id={client_id}"
-                async with session.get(resolve_url) as resp:
+                async with session.get(resolve_url, proxy=proxy) as resp:
                     if resp.status != 200:
                         raise ValueError(f"Failed to resolve playlist URL ({resp.status})")
                     playlist_data = await resp.json()
             else:
                 # Direct playlist ID
                 pl_url = f"https://api-v2.soundcloud.com/playlists/{raw_target}?client_id={client_id}"
-                async with session.get(pl_url) as resp:
+                async with session.get(pl_url, proxy=proxy) as resp:
                     if resp.status != 200:
                         raise ValueError(f"Failed to fetch playlist {raw_target} ({resp.status})")
                     playlist_data = await resp.json()

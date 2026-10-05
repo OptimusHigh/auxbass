@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Dict, List, Any
 import aiohttp
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.matching import (
     normalize_title,
     normalize_artist,
@@ -45,7 +45,8 @@ class AlbumTracklistMatcher:
             timeout = aiohttp.ClientTimeout(total=10)
             self._session = aiohttp.ClientSession(
                 timeout=timeout,
-                headers={"User-Agent": self.USER_AGENT}
+                headers={"User-Agent": self.USER_AGENT},
+                trust_env=True,
             )
         return self._session
     
@@ -78,7 +79,8 @@ class AlbumTracklistMatcher:
         }
         
         try:
-            async with session.get(self.LASTFM_API, params=request_params) as resp:
+            proxy = get_proxy_url()
+            async with session.get(self.LASTFM_API, params=request_params, proxy=proxy) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()

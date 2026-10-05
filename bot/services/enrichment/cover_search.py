@@ -9,6 +9,8 @@ import logging
 from typing import List, Dict, Any, Optional
 import aiohttp
 
+from shared.config import get_proxy_url
+
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "TGPlayer/2.0 (https://github.com/user/tg_player)"
@@ -18,8 +20,9 @@ async def _fetch_deezer_covers(query: str, session: aiohttp.ClientSession, limit
     """Search Deezer for track/album covers."""
     url = "https://api.deezer.com/search"
     params = {"q": query, "limit": limit}
+    proxy = get_proxy_url()
     try:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=7)) as resp:
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=7), proxy=proxy) as resp:
             if resp.status != 200:
                 logger.warning(f"Deezer search returned status {resp.status}")
                 return []
@@ -56,8 +59,9 @@ async def _fetch_itunes_covers(query: str, session: aiohttp.ClientSession, limit
     """Search Apple Music / iTunes for high-resolution artworks."""
     url = "https://itunes.apple.com/search"
     params = {"term": query, "entity": "song", "limit": limit}
+    proxy = get_proxy_url()
     try:
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=7)) as resp:
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=7), proxy=proxy) as resp:
             if resp.status != 200:
                 logger.warning(f"iTunes search returned status {resp.status}")
                 return []
@@ -106,7 +110,7 @@ async def search_cover_suggestions(query: str, limit_per_source: int = 8) -> Lis
         return []
 
     headers = {"User-Agent": USER_AGENT}
-    async with aiohttp.ClientSession(headers=headers) as session:
+    async with aiohttp.ClientSession(headers=headers, trust_env=True) as session:
         deezer_task = _fetch_deezer_covers(clean_query, session, limit=limit_per_source)
         itunes_task = _fetch_itunes_covers(clean_query, session, limit=limit_per_source)
         

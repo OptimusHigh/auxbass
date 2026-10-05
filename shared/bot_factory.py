@@ -9,23 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
-from shared.config import get_settings
-
-
-def get_proxy_url() -> Optional[str]:
-    """Get configured proxy URL from settings or environment variables."""
-    settings = get_settings()
-    proxy = (
-        getattr(settings, "proxy_url", None)
-        or os.environ.get("HTTPS_PROXY")
-        or os.environ.get("HTTP_PROXY")
-        or os.environ.get("https_proxy")
-        or os.environ.get("http_proxy")
-    )
-    if proxy and isinstance(proxy, str):
-        proxy = proxy.strip()
-        return proxy if proxy else None
-    return None
+from shared.config import get_settings, get_proxy_url
 
 
 def create_bot(

@@ -17,7 +17,7 @@ from aiogram.types import FSInputFile, BufferedInputFile
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest
 from sqlalchemy import select, and_, or_, func
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.database import get_session
 from shared.images import crop_image_to_square
 from shared.models import (
@@ -755,13 +755,14 @@ class IngestionPipeline:
 
         content = None
         detected_ext = "jpg"
+        proxy = get_proxy_url()
         try:
-            async with aiohttp.ClientSession() as http_client:
+            async with aiohttp.ClientSession(trust_env=True) as http_client:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
                 }
-                async with http_client.get(cover_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                async with http_client.get(cover_url, headers=headers, timeout=aiohttp.ClientTimeout(total=10), proxy=proxy) as resp:
                     if resp.status != 200:
                         logger.warning(f"[Ingestion] Failed to download playlist cover from {cover_url[:60]}: HTTP {resp.status}")
                         return None

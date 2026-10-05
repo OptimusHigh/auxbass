@@ -80,6 +80,49 @@ class Settings(BaseSettings):
         extra = "ignore"
 
 
+def detect_system_proxy() -> str:
+    """Detect available proxy from environment, Windows registry, or local proxy clients."""
+    import sys
+    # 1. Environment variables
+    for key in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        val = os.environ.get(key)
+        if val and val.strip():
+            return val.strip()
+
+    # 2. Windows registry
+    if sys.platform == "win32":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as key:
+                server, _ = winreg.QueryValueEx(key, "ProxyServer")
+                if server and isinstance(server, str) and server.strip():
+                    server = server.strip()
+                    if ";" in server:
+                        for part in server.split(";"):
+                            if part.startswith("http=") or part.startswith("https="):
+                                server = part.split("=")[-1]
+                                break
+                    if not server.startswith("http://") and not server.startswith("socks"):
+                        server = f"http://{server}"
+                    return server
+        except Exception:
+            pass
+
+    # 3. Check common local proxy ports (v2rayN, Xray, Clash, sing-box)
+    import socket
+    for port in (10809, 7890, 10808):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.15)
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    proto = "socks5" if port == 10808 else "http"
+                    return f"{proto}://127.0.0.1:{port}"
+        except Exception:
+            pass
+
+    return ""
+
+
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
@@ -97,11 +140,27 @@ def get_settings() -> Settings:
                 stacklevel=2
             )
     
+    if not settings.proxy_url:
+        detected = detect_system_proxy()
+        if detected:
+            settings.proxy_url = detected
+
     if settings.proxy_url:
         p = settings.proxy_url.strip()
-        os.environ.setdefault("HTTP_PROXY", p)
-        os.environ.setdefault("HTTPS_PROXY", p)
-        os.environ.setdefault("http_proxy", p)
-        os.environ.setdefault("https_proxy", p)
+        os.environ["HTTP_PROXY"] = p
+        os.environ["HTTPS_PROXY"] = p
+        os.environ["ALL_PROXY"] = p
+        os.environ["http_proxy"] = p
+        os.environ["https_proxy"] = p
+        os.environ["all_proxy"] = p
     
     return settings
+
+
+def get_proxy_url() -> str | None:
+    """Get active proxy URL from settings, environment, or system detection."""
+    settings = get_settings()
+    if settings.proxy_url and settings.proxy_url.strip():
+        return settings.proxy_url.strip()
+    return None
+

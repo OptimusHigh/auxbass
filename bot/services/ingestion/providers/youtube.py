@@ -12,7 +12,7 @@ from typing import Optional, List, Dict, Any, Tuple, Callable
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.matching import clean_track_metadata
 from shared.images import crop_image_file_to_square
 from ..base import (
@@ -142,8 +142,9 @@ class YouTubeMusicProvider(BaseMusicProvider):
             "no_warnings": True,
             "socket_timeout": settings.ytdlp_timeout,
         }
-        if settings.proxy_url:
-            opts["proxy"] = settings.proxy_url.strip()
+        proxy = get_proxy_url()
+        if proxy:
+            opts["proxy"] = proxy
         if extra:
             opts.update(extra)
         return opts
@@ -424,8 +425,8 @@ class YouTubeMusicProvider(BaseMusicProvider):
                     best_art = suggestions[0].get("cover_url")
                     if best_art:
                         temp_cover = os.path.join(temp_dir, "cover.jpg")
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(best_art, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                        async with aiohttp.ClientSession(trust_env=True) as session:
+                            async with session.get(best_art, timeout=aiohttp.ClientTimeout(total=8), proxy=proxy) as resp:
                                 if resp.status == 200:
                                     content = await resp.read()
                                     if len(content) > 1000:
