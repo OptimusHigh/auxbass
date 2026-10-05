@@ -675,15 +675,22 @@ export const usePlayerStore = defineStore('player', () => {
   /**
    * Apply a resolved audio source to the audio element.
    * Used by play(), next(), prev(), resumeFromState() — eliminating 4× duplication.
+   *
+   * CRITICAL ANDROID RULE: Never call audio.pause() or audio.load() between tracks.
+   * Setting audio.src while playing automatically aborts the current stream and starts
+   * loading the new one. Explicit pause() sends a 'paused' state to Android MediaSession
+   * which tears down the lock screen notification. Explicit load() transitions the element
+   * through NETWORK_EMPTY which Android interprets as "player closed".
+   * The only safe pattern is: audio.src = newUrl; audio.play();
    */
   const applySource = async (track, source) => {
     switch (source.type) {
       case 'blob': {
-        audio.value.pause()
-        audio.value.currentTime = 0
+        // Set src directly — Chromium aborts previous stream and loads new blob seamlessly.
+        // Do NOT call audio.pause() or audio.load() here.
         audio.value.src = source.src
+        audio.value.currentTime = 0
         buffered.value = duration.value
-        audio.value.load()
         await audio.value.play()
         isPlaying.value = true
         hdTrackInfo.value = null
@@ -691,6 +698,7 @@ export const usePlayerStore = defineStore('player', () => {
       }
       case 'cached-url':
       case 'fresh-url': {
+        // Set src directly — no pause(), no load().
         audio.value.src = source.src
         buffered.value = 0
         await audio.value.play()
