@@ -84,3 +84,17 @@ async def close_http_session():
     if _http_session and not _http_session.closed:
         await _http_session.close()
         _http_session = None
+
+
+def get_session_stats() -> Optional[dict]:
+    """Get HTTP session stats for diagnostics"""
+    global _http_session
+    if _http_session and not _http_session.closed:
+        connector = _http_session.connector
+        if connector:
+            return {
+                "closed": _http_session.closed,
+                "limit": getattr(connector, '_limit', None),
+                "limit_per_host": getattr(connector, '_limit_per_host', None),
+            }
+    return None

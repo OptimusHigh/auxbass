@@ -18,14 +18,14 @@ from sqlalchemy.orm import selectinload
 import aiohttp
 import asyncio
 
-from shared.config import get_settings
+from shared.config import get_settings, get_proxy_url
 from shared.database import get_db
 from shared.models import Track, UserLibrary, ChannelMessage, ChannelMessageStatus, UserChannel, utcnow
 from shared.matching import normalize_title, normalize_artist
 
 from .auth import get_current_user
 from api.utils.responses import is_streamable, HD_MIME_TYPES
-from api.utils.bot_helpers import get_http_session, close_http_session
+from api.utils.bot_helpers import get_http_session, close_http_session, get_session_stats
 from api.schemas.player import StreamUrlResponse, DownloadPlaylistRequest
 from api.schemas.common import TelegramUser
 
@@ -1327,7 +1327,7 @@ async def get_player_diagnostics():
     Get diagnostic information about player streaming system.
     Useful for debugging streaming issues.
     """
-    global _http_session, _file_path_cache, _stream_tokens
+    global _file_path_cache, _stream_tokens
     
     now = time.time()
     
@@ -1340,15 +1340,7 @@ async def get_player_diagnostics():
     expired_paths = len(_file_path_cache) - active_paths
     
     # HTTP session stats
-    session_stats = None
-    if _http_session and not _http_session.closed:
-        connector = _http_session.connector
-        if connector:
-            session_stats = {
-                "closed": _http_session.closed,
-                "limit": getattr(connector, '_limit', None),
-                "limit_per_host": getattr(connector, '_limit_per_host', None),
-            }
+    session_stats = get_session_stats()
     
     # Test Telegram API connectivity
     telegram_status = "unknown"
@@ -1359,7 +1351,8 @@ async def get_player_diagnostics():
         api_url = f"{base_url}/bot{settings.bot_token}/getMe"
         
         start = time.time()
-        async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+        proxy = get_proxy_url()
+        async with session.get(api_url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=5)) as resp:
             telegram_latency_ms = round((time.time() - start) * 1000, 1)
             if resp.status == 200:
                 data = await resp.json()
