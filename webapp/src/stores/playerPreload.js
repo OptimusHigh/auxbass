@@ -21,6 +21,7 @@ export const markUserInteraction = () => {
 }
 
 export const isUserActivelyBrowsing = () => {
+  if (typeof document !== 'undefined' && document.hidden) return false
   return Date.now() - _userInteractionTime < USER_INTERACTION_COOLDOWN
 }
 

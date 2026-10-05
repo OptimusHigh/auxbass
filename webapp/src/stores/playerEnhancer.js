@@ -58,6 +58,55 @@ export function resumeAudioContext() {
   }
 }
 
+// Background Audio Keep-Alive for Android / Mobile
+// Loops an inaudible digital silence buffer through WebAudio.
+// Keeps the underlying Android OpenSL ES / AAudio stream alive in audioserver
+// so the OS does not put the tab/process into deep sleep when an HTML5 audio element
+// ends or reloads its src while the screen is locked.
+let keepAliveSource = null
+let keepAliveGain = null
+
+export function startAudioKeepAlive() {
+  if (!audioCtx) initAudioContext()
+  if (!audioCtx) return
+
+  try {
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {})
+    }
+    if (keepAliveSource) return // already running
+
+    const sampleRate = audioCtx.sampleRate || 44100
+    const buffer = audioCtx.createBuffer(1, sampleRate, sampleRate)
+
+    if (!keepAliveGain) {
+      keepAliveGain = audioCtx.createGain()
+      keepAliveGain.gain.value = 0.00001
+      keepAliveGain.connect(audioCtx.destination)
+    }
+
+    keepAliveSource = audioCtx.createBufferSource()
+    keepAliveSource.buffer = buffer
+    keepAliveSource.loop = true
+    keepAliveSource.connect(keepAliveGain)
+    keepAliveSource.start()
+    console.log('[Audio Enhancer] Background keep-alive started')
+  } catch (e) {
+    console.warn('[Audio Enhancer] Could not start keep-alive:', e)
+  }
+}
+
+export function stopAudioKeepAlive() {
+  if (keepAliveSource) {
+    try {
+      keepAliveSource.stop()
+      keepAliveSource.disconnect()
+    } catch (_) {}
+    keepAliveSource = null
+    console.log('[Audio Enhancer] Background keep-alive stopped')
+  }
+}
+
 let analyserNode = null
 
 /**

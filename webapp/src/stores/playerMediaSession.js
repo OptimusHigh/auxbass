@@ -3,17 +3,29 @@
  * Handles lock-screen controls, Bluetooth, media keys, and keyboard shortcuts.
  * Extracted from player.js to reduce god-object.
  */
-import { getDisplayTitle, getDisplayArtist } from '../utils/formatters'
+import { getDisplayTitle, getDisplayArtist, getCoverUrl, CoverSize } from '../utils/formatters'
+
+/**
+ * Helper to ensure URLs are absolute for Android MediaSession/WebView compatibility
+ */
+const toAbsoluteUrl = (path) => {
+  if (!path) return ''
+  try {
+    return new URL(path, window.location.origin).href
+  } catch (_) {
+    return path
+  }
+}
 
 /**
  * Fallback artwork for Media Session when track has no cover.
- * Android 8 may not show lock-screen controls without artwork.
+ * Android may not show lock-screen controls without artwork.
  */
 const FALLBACK_ARTWORK = [
-  { src: '/icons/icon-96x96.png', sizes: '96x96', type: 'image/png' },
-  { src: '/icons/icon-128x128.png', sizes: '128x128', type: 'image/png' },
-  { src: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png' },
-  { src: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png' },
+  { src: toAbsoluteUrl('/icons/icon-96x96.png'), sizes: '96x96', type: 'image/png' },
+  { src: toAbsoluteUrl('/icons/icon-128x128.png'), sizes: '128x128', type: 'image/png' },
+  { src: toAbsoluteUrl('/icons/icon-192x192.png'), sizes: '192x192', type: 'image/png' },
+  { src: toAbsoluteUrl('/icons/icon-512x512.png'), sizes: '512x512', type: 'image/png' },
 ]
 
 /**
@@ -22,22 +34,46 @@ const FALLBACK_ARTWORK = [
 export function updateMediaSession(track, updatePlaybackStateFn) {
   if (!('mediaSession' in navigator) || !track) return
 
-  const coverUrl = track.cover_url
-  const artwork = coverUrl ? [
-    { src: coverUrl, sizes: '96x96', type: 'image/jpeg' },
-    { src: coverUrl, sizes: '128x128', type: 'image/jpeg' },
-    { src: coverUrl, sizes: '256x256', type: 'image/jpeg' },
-    { src: coverUrl, sizes: '512x512', type: 'image/jpeg' },
-  ] : FALLBACK_ARTWORK
+  try {
+    let artwork = FALLBACK_ARTWORK
+    const coverUrl = track.cover_url
+    if (coverUrl) {
+      try {
+        const formatted = getCoverUrl(coverUrl, CoverSize.MEDIUM) || coverUrl
+        const absUrl = toAbsoluteUrl(formatted)
+        artwork = [
+          { src: absUrl, sizes: '96x96', type: 'image/jpeg' },
+          { src: absUrl, sizes: '128x128', type: 'image/jpeg' },
+          { src: absUrl, sizes: '256x256', type: 'image/jpeg' },
+          { src: absUrl, sizes: '512x512', type: 'image/jpeg' },
+        ]
+      } catch (_) {
+        artwork = FALLBACK_ARTWORK
+      }
+    }
 
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: getDisplayTitle(track),
-    artist: getDisplayArtist(track),
-    album: track.album || '',
-    artwork
-  })
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: getDisplayTitle(track) || 'Unknown Track',
+      artist: getDisplayArtist(track) || 'Unknown Artist',
+      album: track.album || track.album_title || '',
+      artwork
+    })
 
-  if (updatePlaybackStateFn) updatePlaybackStateFn()
+    // Pre-initialize position state to 0 for new track if duration is available
+    if (track.duration && isFinite(track.duration) && track.duration > 0 && 'setPositionState' in navigator.mediaSession) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: track.duration,
+          playbackRate: 1,
+          position: 0
+        })
+      } catch (_) {}
+    }
+
+    if (updatePlaybackStateFn) updatePlaybackStateFn()
+  } catch (e) {
+    console.warn('[MediaSession] updateMediaSession error:', e)
+  }
 }
 
 /**
@@ -45,20 +81,23 @@ export function updateMediaSession(track, updatePlaybackStateFn) {
  */
 export function updatePlaybackState(isPlaying) {
   if (!('mediaSession' in navigator)) return
-  navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  try {
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+  } catch (_) {}
 }
 
 /**
  * Sync Media Session position state.
  */
 export function updatePositionState(audio, progressVal, durationVal) {
-  if (!('mediaSession' in navigator) || !audio || !durationVal || !isFinite(durationVal)) return
+  if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return
+  if (!durationVal || !isFinite(durationVal) || durationVal <= 0) return
   try {
-    const position = Math.min(progressVal, durationVal)
+    const position = Math.min(Math.max(0, progressVal || 0), durationVal)
     if (isFinite(position) && position >= 0) {
       navigator.mediaSession.setPositionState({
         duration: durationVal,
-        playbackRate: audio.playbackRate || 1,
+        playbackRate: audio?.playbackRate || 1,
         position
       })
     }

@@ -30,6 +30,8 @@ import {
   initAudioContext,
   connectAudioSource as connectEnhancer,
   updateEnhancerParams as _updateEnhancer,
+  startAudioKeepAlive,
+  stopAudioKeepAlive,
 } from './playerEnhancer'
 
 import {
@@ -119,6 +121,7 @@ export const usePlayerStore = defineStore('player', () => {
   const cacheMaxBytes = ref(savedSettings.cacheMaxBytes ?? 1073741824) // 1 GB default
 
   const loading = ref(false)
+  const isChangingTrack = ref(false)
   const buffered = ref(0)
   const nextTrackPreloaded = ref(null)
   const lastError = ref(null)
@@ -199,6 +202,7 @@ export const usePlayerStore = defineStore('player', () => {
   // Private flags
   let stateSaveInterval = null
   let preloadTriggered = false
+  let preloadNearEndTriggered = false
   let isSkipping = false
   let _playGeneration = 0
   let shuffleInProgress = false
@@ -308,14 +312,33 @@ export const usePlayerStore = defineStore('player', () => {
     return idx === -1 ? null : queue.value[idx] || null
   }
 
+  const _trackCache = new Map()
+
   const loadTrackById = async (trackId) => {
+    if (!trackId) return null
+    if (_trackCache.has(trackId)) {
+      return _trackCache.get(trackId)
+    }
+    const inUpcoming = lazyUpcomingTracks.value.find(t => t.id === trackId)
+    if (inUpcoming) {
+      _trackCache.set(trackId, inUpcoming)
+      return inUpcoming
+    }
+    const inQueue = queue.value.find(t => t.id === trackId)
+    if (inQueue) {
+      _trackCache.set(trackId, inQueue)
+      return inQueue
+    }
     try {
       const r = await tracksApi.getOne(trackId)
-      return r.data
+      if (r?.data) {
+        _trackCache.set(trackId, r.data)
+        return r.data
+      }
     } catch (e) {
       console.error(`[Lazy Shuffle] Failed to load track ${trackId}:`, e)
-      return null
     }
+    return null
   }
 
   // ===================== RELEVANT IDS HELPER =====================
@@ -422,8 +445,10 @@ export const usePlayerStore = defineStore('player', () => {
     },
     onPlaying: () => {
       loading.value = false; clearStallTimer(); resetStallRetry(); resetAudioRetry()
+      isChangingTrack.value = false
       isPlaying.value = true
       updatePlaybackState()
+      startAudioKeepAlive()
     },
     onWaiting: () => {
       if (audio.value && audio.value.readyState < 3) {
@@ -452,8 +477,8 @@ export const usePlayerStore = defineStore('player', () => {
       }
       clearStallTimer()
 
-      // Self-heal isPlaying if desynced from actual DOM audio state
-      if (!audio.value._obsolete) {
+      // Self-heal isPlaying if desynced from actual DOM audio state (only outside transitions)
+      if (!audio.value._obsolete && !isChangingTrack.value && !isSkipping) {
         if (!audio.value.paused && !isPlaying.value) {
           isPlaying.value = true
           updatePlaybackState()
@@ -471,6 +496,11 @@ export const usePlayerStore = defineStore('player', () => {
       // Fallback preload trigger
       if (duration.value > 0 && !preloadTriggered && progress.value > 0.5) {
         preloadTriggered = true
+        preloadNextTracks()
+      }
+      // Proactive near-end preload trigger: 15s before track ends, make sure next track is preloaded
+      if (duration.value > 20 && duration.value - progress.value < 15 && !preloadNearEndTriggered) {
+        preloadNearEndTriggered = true
         preloadNextTracks()
       }
     },
@@ -494,24 +524,32 @@ export const usePlayerStore = defineStore('player', () => {
     onPlay: (e) => {
       if (e?.target?._obsolete) return
       if (audio.value) audio.value._obsolete = false
+      isChangingTrack.value = false
       isPlaying.value = true
       isSkipping = false
       resetSkipCount(); resetAudioRetry(); resetStallRetry()
       clearStallTimer()
       updatePlaybackState()
+      startAudioKeepAlive()
       startStateSaving()
     },
     onPause: (e) => {
-      // Skip MediaSession update when old audio element is paused during swap.
-      // Without this, the brief 'paused' state can dismiss the Android notification.
+      // Skip MediaSession update when swapping tracks or skipping.
+      // Without this, the brief 'paused' state dismisses the Android lock screen notification.
       if (e?.target?._obsolete) return
+      if (isChangingTrack.value || isSkipping) {
+        console.log('[Player] onPause ignored during track transition')
+        return
+      }
       isPlaying.value = false
       clearStallTimer()
       updatePlaybackState()
+      stopAudioKeepAlive()
       persistState()
     },
     onError: async (e) => {
       loading.value = false; clearStallTimer()
+      isChangingTrack.value = false
       if (e.target?._obsolete) return
       const el = audio.value
       if (!el) return
@@ -584,14 +622,26 @@ export const usePlayerStore = defineStore('player', () => {
   // Extracted so we can re-register after audio element swap (Android fix).
   // Uses refs/closures — always accesses current audio.value at call time.
   const _msActions = () => ({
-    play: () => audio.value?.play(),
+    play: () => {
+      if (!audio.value?.src && currentTrack.value) {
+        play(currentTrack.value)
+      } else {
+        audio.value?.play()
+      }
+    },
     pause: () => audio.value?.pause(),
     prev: () => prev(),
     next: () => next(),
     seek: (t) => seek(t),
     seekBackward: (s) => seek(Math.max(0, progress.value - s)),
     seekForward: (s) => seek(Math.min(duration.value, progress.value + s)),
-    stop: () => { if (audio.value) { audio.value.pause(); audio.value.currentTime = 0 }; isPlaying.value = false; updatePlaybackState() },
+    stop: () => {
+      if (audio.value) { audio.value.pause(); audio.value.currentTime = 0 }
+      isPlaying.value = false
+      isChangingTrack.value = false
+      updatePlaybackState()
+      stopAudioKeepAlive()
+    },
   })
 
   // ===================== INIT AUDIO =====================
@@ -739,6 +789,8 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     preloadTriggered = false
+    preloadNearEndTriggered = false
+    isChangingTrack.value = true
     loading.value = true
     currentTrack.value = track
     lastError.value = null
@@ -749,6 +801,7 @@ export const usePlayerStore = defineStore('player', () => {
       const source = await resolveAudioSource(track, playerApi.getStreamUrl.bind(playerApi))
       await applySource(track, source)
       loading.value = false
+      isChangingTrack.value = false
       nextTrackPreloaded.value = null
       persistState()
       startStateSaving()
@@ -761,6 +814,7 @@ export const usePlayerStore = defineStore('player', () => {
       // Request persistent storage on playback
       requestStoragePersistence()
     } catch (error) {
+      isChangingTrack.value = false
       if (error.name === 'AbortError') { loading.value = false; return }
       if (generation !== _playGeneration) return
 
@@ -958,12 +1012,14 @@ export const usePlayerStore = defineStore('player', () => {
       try {
         await audio.value.play()
         isPlaying.value = true
+        startAudioKeepAlive()
       } catch (err) {
         console.error('[Player] Failed to play on toggle:', err)
       }
     } else {
       audio.value.pause()
       isPlaying.value = false
+      stopAudioKeepAlive()
     }
     updatePlaybackState()
   }
@@ -977,22 +1033,35 @@ export const usePlayerStore = defineStore('player', () => {
   // ===================== NEXT =====================
   const next = async () => {
     isSkipping = true
+    isChangingTrack.value = true
     markUserInteraction()
     cancelIrrelevantPreloads(_collectRelevantIds())
     preloadTriggered = false
+    preloadNearEndTriggered = false
     clearPreloadAudio()
 
     // === LAZY SHUFFLE ===
     if (isLazyShuffleMode()) {
+      const generation = ++_playGeneration
       lazyShuffleIndex.value++
       if (lazyShuffleIndex.value >= lazyShuffleIds.value.length) {
         if (repeat.value === 'all') lazyShuffleIndex.value = 0
-        else { isPlaying.value = false; isSkipping = false; clearLazyShuffle(); return }
+        else {
+          isPlaying.value = false
+          isSkipping = false
+          isChangingTrack.value = false
+          clearLazyShuffle()
+          updatePlaybackState()
+          stopAudioKeepAlive()
+          return
+        }
       }
       const nextTrackId = lazyShuffleIds.value[lazyShuffleIndex.value]
 
       loading.value = true
       const t = await loadTrackById(nextTrackId)
+      if (generation !== _playGeneration) return
+
       if (!t || t.is_disliked || t.is_unavailable || isTrackNotStreamable(t)) {
         loading.value = false
         await next()
@@ -1006,7 +1075,11 @@ export const usePlayerStore = defineStore('player', () => {
     }
 
     // === REGULAR ===
-    if (queue.value.length === 0) { isSkipping = false; return }
+    if (queue.value.length === 0) {
+      isSkipping = false
+      isChangingTrack.value = false
+      return
+    }
 
     let nextIndex
     let attempts = 0
@@ -1017,14 +1090,28 @@ export const usePlayerStore = defineStore('player', () => {
         shuffleIndex.value++
         if (shuffleIndex.value >= shuffleOrder.value.length) {
           if (repeat.value === 'all') generateShuffleOrder()
-          else { isPlaying.value = false; isSkipping = false; return }
+          else {
+            isPlaying.value = false
+            isSkipping = false
+            isChangingTrack.value = false
+            updatePlaybackState()
+            stopAudioKeepAlive()
+            return
+          }
         }
         nextIndex = shuffleOrder.value[shuffleIndex.value]
       } else {
         nextIndex = queueIndex.value + 1
         if (nextIndex >= queue.value.length) {
           if (repeat.value === 'all') nextIndex = 0
-          else { isPlaying.value = false; isSkipping = false; return }
+          else {
+            isPlaying.value = false
+            isSkipping = false
+            isChangingTrack.value = false
+            updatePlaybackState()
+            stopAudioKeepAlive()
+            return
+          }
         }
       }
 
@@ -1039,10 +1126,16 @@ export const usePlayerStore = defineStore('player', () => {
 
     const nextTrack = queue.value[queueIndex.value]
     if (!nextTrack || nextTrack.is_unavailable || nextTrack.is_disliked || isTrackNotStreamable(nextTrack)) {
-      isPlaying.value = false; isSkipping = false; return
+      isPlaying.value = false
+      isSkipping = false
+      isChangingTrack.value = false
+      updatePlaybackState()
+      stopAudioKeepAlive()
+      return
     }
 
     // Use unified resolveAudioSource instead of 4× duplicated cascade
+    const generation = ++_playGeneration
     initAudio()
     loading.value = true
     currentTrack.value = nextTrack
@@ -1050,14 +1143,17 @@ export const usePlayerStore = defineStore('player', () => {
 
     try {
       const source = await resolveAudioSource(nextTrack, playerApi.getStreamUrl.bind(playerApi))
+      if (generation !== _playGeneration) return
       await applySource(nextTrack, source)
       loading.value = false
       isSkipping = false
+      isChangingTrack.value = false
       nextTrackPreloaded.value = null
       clearPreloadAudio()
       persistState()
       preloadNextTracks()
     } catch (e) {
+      if (generation !== _playGeneration) return
       if (e.name === 'AbortError') return
       console.error('[Next] Failed:', e)
       if (nextTrack) {
@@ -1070,14 +1166,22 @@ export const usePlayerStore = defineStore('player', () => {
   // ===================== PREV =====================
   const prev = async () => {
     isSkipping = true
+    isChangingTrack.value = true
     markUserInteraction()
     preloadTriggered = false
+    preloadNearEndTriggered = false
     clearPreloadAudio()
 
-    if (progress.value > 3) { seek(0); isSkipping = false; return }
+    if (progress.value > 3) {
+      seek(0)
+      isSkipping = false
+      isChangingTrack.value = false
+      return
+    }
 
     // === LAZY SHUFFLE ===
     if (isLazyShuffleMode()) {
+      const generation = ++_playGeneration
       lazyShuffleIndex.value--
       if (lazyShuffleIndex.value < 0) {
         if (repeat.value === 'all') lazyShuffleIndex.value = lazyShuffleIds.value.length - 1
@@ -1086,6 +1190,8 @@ export const usePlayerStore = defineStore('player', () => {
       const prevTrackId = lazyShuffleIds.value[lazyShuffleIndex.value]
       loading.value = true
       const t = await loadTrackById(prevTrackId)
+      if (generation !== _playGeneration) return
+
       if (!t || t.is_disliked || t.is_unavailable || isTrackNotStreamable(t)) {
         loading.value = false
         await prev()
@@ -1098,7 +1204,11 @@ export const usePlayerStore = defineStore('player', () => {
       return
     }
 
-    if (queue.value.length === 0) { isSkipping = false; return }
+    if (queue.value.length === 0) {
+      isSkipping = false
+      isChangingTrack.value = false
+      return
+    }
 
     let prevIndex
     let attempts = 0
@@ -1118,10 +1228,15 @@ export const usePlayerStore = defineStore('player', () => {
 
     const prevTrack = queue.value[queueIndex.value]
     if (!prevTrack || prevTrack.is_unavailable || prevTrack.is_disliked || isTrackNotStreamable(prevTrack)) {
-      isPlaying.value = false; isSkipping = false; return
+      isPlaying.value = false
+      isSkipping = false
+      isChangingTrack.value = false
+      updatePlaybackState()
+      stopAudioKeepAlive()
+      return
     }
 
-    // Use unified resolveAudioSource (BUG-1 FIX: no more undefined audioCache.delete)
+    const generation = ++_playGeneration
     initAudio()
     loading.value = true
     currentTrack.value = prevTrack
@@ -1129,12 +1244,15 @@ export const usePlayerStore = defineStore('player', () => {
 
     try {
       const source = await resolveAudioSource(prevTrack, playerApi.getStreamUrl.bind(playerApi))
+      if (generation !== _playGeneration) return
       await applySource(prevTrack, source)
       loading.value = false
       isSkipping = false
+      isChangingTrack.value = false
       persistState()
       preloadNextTracks()
     } catch (e) {
+      if (generation !== _playGeneration) return
       if (e.name === 'AbortError') return
       console.error('[Prev] Failed:', e)
       if (prevTrack) {
@@ -1149,13 +1267,21 @@ export const usePlayerStore = defineStore('player', () => {
     const track = currentTrack.value
     if (!track || !audio.value?.src) return
 
-    if (currentTrack.value) {
-      try { await playerApi.recordPlay(currentTrack.value.id) } catch (_) {}
+    isChangingTrack.value = true
+
+    // Background fire-and-forget: do NOT await recordPlay to avoid delaying next track start while screen is locked
+    if (track.id) {
+      playerApi.recordPlay(track.id).catch(() => {})
     }
 
     if (repeat.value === 'one') {
       seek(0)
-      try { await audio.value.play() } catch (_) {}
+      try {
+        await audio.value.play()
+        isChangingTrack.value = false
+      } catch (_) {
+        isChangingTrack.value = false
+      }
     } else {
       await next()
     }
@@ -1303,8 +1429,10 @@ export const usePlayerStore = defineStore('player', () => {
   const stop = () => {
     if (audio.value) { audio.value._obsolete = true; audio.value.pause(); audio.value.src = '' }
     currentTrack.value = null; isPlaying.value = false
+    isChangingTrack.value = false
     progress.value = 0; duration.value = 0
     queue.value = []; queueIndex.value = -1
+    stopAudioKeepAlive()
     stopStateSaving(); clearPlayerState()
   }
 
