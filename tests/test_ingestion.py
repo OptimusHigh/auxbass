@@ -399,6 +399,30 @@ async def test_audio_resolver_matching_logic():
     assert best["webpage_url"] == "https://soundcloud.com/test/good"
 
 
+def test_audio_resolver_relaxed_duration_fallback():
+    from bot.services.ingestion.audio_resolver import AudioResolver
+
+    resolver = AudioResolver()
+    target = TrackMetadata(
+        provider_name="spotify",
+        url="https://open.spotify.com/track/123",
+        title="Fasten Your Seatbelt",
+        artist="Pendulum",
+        duration=190,
+    )
+
+    candidates = [
+        # Candidate with 25s intro/outro difference (190 vs 215 = 25s diff), matching title
+        {"title": "Pendulum - Fasten Your Seatbelt (Official Audio)", "duration": 215, "webpage_url": "https://youtube.com/watch?v=intro"},
+        # Candidate with huge difference (>35s)
+        {"title": "Pendulum - Fasten Your Seatbelt (Live)", "duration": 300, "webpage_url": "https://youtube.com/watch?v=long"},
+    ]
+
+    ranked = resolver._rank_candidates(target, candidates, exclude_urls=set())
+    assert len(ranked) == 1
+    assert ranked[0]["webpage_url"] == "https://youtube.com/watch?v=intro"
+
+
 @pytest.mark.asyncio
 async def test_soundcloud_drm_fallback_to_audio_resolver(monkeypatch):
     from bot.services.ingestion.providers.soundcloud import SoundCloudProvider

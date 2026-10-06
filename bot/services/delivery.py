@@ -74,7 +74,8 @@ async def deliver_single_track(
     chat_id: int,
     track_id: int,
     user_id: Optional[int] = None,
-    reply_to_message_id: Optional[int] = None
+    reply_to_message_id: Optional[int] = None,
+    send_failure_message: bool = True,
 ) -> bool:
     """Send a single audio track to chat using Telegram file_id"""
     async with get_session() as session:
@@ -86,7 +87,8 @@ async def deliver_single_track(
         valid_file_id = await _ensure_deliverable_file_id(track, session)
         if not valid_file_id:
             logger.warning(f"Track {track_id} not found or missing file_id")
-            await bot.send_message(chat_id=chat_id, text="❌ Трек не найден или недоступен.")
+            if send_failure_message:
+                await bot.send_message(chat_id=chat_id, text="❌ Трек не найден или недоступен.")
             return False
 
         caption = f"🎧 <b>{track.artist or 'Неизвестен'} — {track.title or 'Без названия'}</b>"
@@ -118,8 +120,14 @@ async def deliver_single_track(
             )
             return True
         except Exception as e:
+            err_msg = str(e).lower()
             logger.error(f"Failed to send track {track_id} to chat {chat_id}: {e}")
-            await bot.send_message(chat_id=chat_id, text="❌ Не удалось отправить аудиофайл.")
+            if "wrong file identifier" in err_msg or "wrong remote file identifier" in err_msg:
+                logger.warning(f"Marking track {track_id} unavailable due to invalid/foreign file_id")
+                track.is_unavailable = True
+                await session.commit()
+            if send_failure_message:
+                await bot.send_message(chat_id=chat_id, text="❌ Не удалось отправить аудиофайл.")
             return False
 
 

@@ -154,3 +154,33 @@ async def test_deliver_single_track_with_album():
         assert "Bladee — Hero of My Story 3style3" in call_kwargs["caption"]
         assert "💿 <i>333</i>" in call_kwargs["caption"]
 
+
+@pytest.mark.asyncio
+async def test_deliver_single_track_wrong_file_identifier_marks_unavailable():
+    from unittest.mock import AsyncMock, patch
+    from aiogram.exceptions import TelegramBadRequest
+    from bot.services.delivery import deliver_single_track
+
+    bot = AsyncMock()
+    bot.send_audio.side_effect = Exception("Telegram server says - Bad Request: wrong file identifier/HTTP URL specified")
+
+    track = Track(id=3258, file_id="dead_file_id", title="Gtblessgo", artist="Thaiboy Digital", is_unavailable=False)
+
+    session_mock = AsyncMock()
+    session_mock.scalar = AsyncMock(return_value=track)
+    session_mock.commit = AsyncMock()
+
+    class DummyContext:
+        async def __aenter__(self):
+            return session_mock
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch("bot.services.delivery.get_session", return_value=DummyContext()):
+        res = await deliver_single_track(bot=bot, chat_id=123, track_id=3258, send_failure_message=False)
+        assert res is False
+        assert track.is_unavailable is True
+        session_mock.commit.assert_called_once()
+        bot.send_message.assert_not_called()
+
+

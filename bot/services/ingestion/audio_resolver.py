@@ -45,6 +45,10 @@ class AudioResolver:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": settings.ytdlp_timeout,
+            "retries": 5,
+            "fragment_retries": 10,
+            "file_access_retries": 3,
+            "extractor_retries": 3,
         }
         proxy = get_proxy_url()
         if proxy:
@@ -82,6 +86,7 @@ class AudioResolver:
             exclude_set.add(track_meta.url)
 
         search_query = f"{track_meta.artist} {track_meta.title}".strip()
+        first_artist = track_meta.artist.split(",")[0].split(" feat")[0].split(" ft")[0].strip()
         downloaded_audio_path = None
         matched_candidate_title = None
         matched_candidate_url = None
@@ -92,12 +97,10 @@ class AudioResolver:
         sc_candidates = await self._search_candidates(search_query, limit=10)
         ranked_sc = self._rank_candidates(track_meta, sc_candidates, exclude_set)
 
-        if not ranked_sc:
-            first_artist = track_meta.artist.split(",")[0].split(" feat")[0].split(" ft")[0].strip()
-            if first_artist != track_meta.artist:
-                alt_query = f"{first_artist} {track_meta.title}".strip()
-                more_sc = await self._search_candidates(alt_query, limit=10)
-                ranked_sc = self._rank_candidates(track_meta, more_sc, exclude_set)
+        if not ranked_sc and first_artist != track_meta.artist:
+            alt_query = f"{first_artist} {track_meta.title}".strip()
+            more_sc = await self._search_candidates(alt_query, limit=10)
+            ranked_sc = self._rank_candidates(track_meta, more_sc, exclude_set)
 
         is_studio = not bool(extract_version_markers(track_meta.title))
 
@@ -137,22 +140,32 @@ class AudioResolver:
                 f"[AudioResolver] SoundCloud candidates unavailable, DRM-protected, or version-mismatched for "
                 f"'{track_meta.artist} - {track_meta.title}'. Falling back to YouTube Music..."
             )
-            yt_candidates = await self._search_youtube_candidates(search_query, limit=6)
+            yt_candidates = await self._search_youtube_candidates(search_query, limit=10)
             ranked_yt = self._rank_candidates(track_meta, yt_candidates, exclude_set)
 
-            # Targeted studio search if no clean candidate was found in standard query
+            # Ensure we have resilient alternative candidates if primary pool is small or sub-optimal
             best_penalty = ranked_yt[0].get("_penalty", 999.0) if ranked_yt else 999.0
-            if is_studio and best_penalty > 100.0:
-                studio_query = f"{first_artist} {track_meta.title} audio".strip()
-                logger.info(f"[AudioResolver] Searching targeted studio audio for '{studio_query}'...")
-                more_yt = await self._search_youtube_candidates(studio_query, limit=6)
-                ranked_more = self._rank_candidates(track_meta, more_yt, exclude_set)
-                if ranked_more and ranked_more[0].get("_penalty", 999.0) < best_penalty:
-                    ranked_yt = ranked_more
-            elif not ranked_yt and first_artist != track_meta.artist:
-                alt_query = f"{first_artist} {track_meta.title}".strip()
-                more_yt = await self._search_youtube_candidates(alt_query, limit=6)
-                ranked_yt = self._rank_candidates(track_meta, more_yt, exclude_set)
+            if len(ranked_yt) < 3 or best_penalty > 80.0:
+                more_queries = []
+                if is_studio:
+                    more_queries.append(f"{first_artist} {track_meta.title} audio".strip())
+                if first_artist != track_meta.artist:
+                    more_queries.append(f"{first_artist} {track_meta.title}".strip())
+                more_queries.append(f"{track_meta.artist} {track_meta.title} topic".strip())
+
+                seen_urls = {c.get("webpage_url") or c.get("url") for c in ranked_yt}
+                for q in more_queries:
+                    try:
+                        more_yt = await self._search_youtube_candidates(q, limit=6)
+                        for mc in self._rank_candidates(track_meta, more_yt, exclude_set):
+                            mc_url = mc.get("webpage_url") or mc.get("url")
+                            if mc_url and mc_url not in seen_urls:
+                                seen_urls.add(mc_url)
+                                ranked_yt.append(mc)
+                    except Exception as q_err:
+                        logger.debug(f"[AudioResolver] Auxiliary YouTube query '{q}' failed: {q_err}")
+
+                ranked_yt.sort(key=lambda x: x.get("_penalty", 999.0))
 
             for cand in ranked_yt:
                 cand_url = cand.get("webpage_url") or cand.get("url")
@@ -298,7 +311,13 @@ class AudioResolver:
             if target.duration and cand_dur:
                 diff = abs(cand_dur - target.duration)
                 if diff > self.MAX_DURATION_DIFF_SECONDS:
-                    continue
+                    # Allow relaxed fallback tier up to 35s diff if title is a high-confidence match
+                    clean_target_t = target.title.lower()
+                    clean_cand_t = cand_title.lower()
+                    if diff <= 35 and (fuzzy_match_title(target.title, cand_title) >= 0.7 or clean_target_t in clean_cand_t):
+                        diff += 60.0  # Heavy penalty so exact duration matches take priority
+                    else:
+                        continue
             else:
                 diff = 10  # neutral penalty if duration unknown
 
@@ -393,29 +412,46 @@ class AudioResolver:
                 except Exception:
                     pass
 
-        def _dl():
-            ydl_opts = self._get_ydl_opts({
-                "format": "bestaudio/best",
-                "outtmpl": out_template,
-                "concurrent_fragment_downloads": 5,
-                "color": "never",
-                "progress_hooks": [_yt_progress] if progress_hook else [],
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192" if chunk_only else "0",
-                    }
-                ],
-            })
-            if chunk_only:
-                ydl_opts["download_ranges"] = download_range_func(None, [(start_sec, end_sec)])
-                ydl_opts["force_keyframes_at_cuts"] = True
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            def _dl():
+                ydl_opts = self._get_ydl_opts({
+                    "format": "bestaudio/best",
+                    "outtmpl": out_template,
+                    # Single fragment connection on retry to avoid TLS handshake congestion
+                    "concurrent_fragment_downloads": 1 if attempt > 1 else 3,
+                    "color": "never",
+                    "progress_hooks": [_yt_progress] if progress_hook else [],
+                    "postprocessors": [
+                        {
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "192" if chunk_only else "0",
+                        }
+                    ],
+                })
+                if chunk_only:
+                    ydl_opts["download_ranges"] = download_range_func(None, [(start_sec, end_sec)])
+                    ydl_opts["force_keyframes_at_cuts"] = True
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
 
-        await asyncio.to_thread(_dl)
+            try:
+                await asyncio.to_thread(_dl)
+                break
+            except Exception as dl_err:
+                err_clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', str(dl_err))
+                err_lower = err_clean.lower()
+                is_net_err = any(k in err_lower for k in ("_ssl", "handshake", "timed out", "timeout", "connection", "transport"))
+                if attempt < max_attempts and is_net_err:
+                    logger.warning(
+                        f"[AudioResolver] Transient network/SSL glitch downloading '{url}' (attempt {attempt}/{max_attempts}): {err_clean}. "
+                        f"Retrying with single-connection mode..."
+                    )
+                    await asyncio.sleep(1.5)
+                    continue
+                raise dl_err
 
         expected_audio = os.path.join(temp_dir, "resolved_audio.mp3")
         if not os.path.exists(expected_audio):

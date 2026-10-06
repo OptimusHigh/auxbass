@@ -13,8 +13,9 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.exceptions import TelegramBadRequest
 
 from shared.database import get_session
-from shared.models import User
+from shared.models import User, Track
 from shared.config import get_settings
+from bot.services.tracks import track_service
 from bot.services.ingestion import (
     provider_registry,
     job_manager,
@@ -146,6 +147,7 @@ async def handle_music_url_message(message: Message):
                     track_id=track_id,
                     user_id=user.id,
                     reply_to_message_id=message.message_id,
+                    send_failure_message=False,
                 )
                 if delivered:
                     try:
@@ -153,13 +155,44 @@ async def handle_music_url_message(message: Message):
                     except Exception:
                         pass
                 else:
-                    await status_msg.edit_text(
-                        f"✅ <b>Трек добавлен в библиотеку!</b>\n\n"
-                        f"🎵 <b>{entity.author} — {entity.title}</b>\n"
-                        f"☁️ Источник: <i>{provider.name.title()}</i>",
-                        reply_markup=get_deep_link_keyboard(f"track_{track_id}", "▶️ Слушать в плеере"),
-                        parse_mode="HTML"
-                    )
+                    # Check if the existing track had an invalid/dead Telegram file_id
+                    re_sourced = False
+                    try:
+                        async with get_session() as s:
+                            t = await s.get(Track, track_id)
+                            is_dead = bool(t and t.is_unavailable)
+
+                        if is_dead:
+                            logger.info(f"[Ingestion] Existing track {track_id} had dead file_id. Auto re-sourcing audio stream...")
+                            await status_msg.edit_text(
+                                f"⏳ <b>Восстанавливаю аудиопоток:</b> {entity.author} — {entity.title}...\n"
+                                f"<i>Старая ссылка Telegram устарела, скачиваю свежий поток</i>",
+                                parse_mode="HTML"
+                            )
+                            fixed_track = await track_service.re_source_audio(
+                                bot=message.bot,
+                                track_id=track_id,
+                                user_id=user.id,
+                                target_chat_id=message.chat.id,
+                            )
+                            if fixed_track:
+                                re_sourced = True
+                    except Exception as re_err:
+                        logger.error(f"[Ingestion] Auto re-source failed for track {track_id}: {re_err}")
+
+                    if re_sourced:
+                        try:
+                            await status_msg.delete()
+                        except Exception:
+                            pass
+                    else:
+                        await status_msg.edit_text(
+                            f"✅ <b>Трек добавлен в библиотеку!</b>\n\n"
+                            f"🎵 <b>{entity.author} — {entity.title}</b>\n"
+                            f"☁️ Источник: <i>{provider.name.title()}</i>",
+                            reply_markup=get_deep_link_keyboard(f"track_{track_id}", "▶️ Слушать в плеере"),
+                            parse_mode="HTML"
+                        )
         else:
             err = job.error_message or "Не удалось обработать аудиофайл"
             await status_msg.edit_text(

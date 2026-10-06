@@ -585,6 +585,100 @@ class TrackService:
         """Reset all failed enrichments to pending"""
         return await enrichment_worker.retry_failed()
 
+    async def re_source_audio(
+        self,
+        bot: Any,
+        track_id: int,
+        user_id: Optional[int] = None,
+        custom_url: Optional[str] = None,
+        target_chat_id: Optional[int] = None,
+    ) -> Optional[Track]:
+        """
+        Re-download and replace audio stream for an existing track with a dead/invalid file_id.
+        Replaces Telegram file_id, duration, and file_size in-place without breaking user libraries or playlists.
+        """
+        import os
+        import tempfile
+        from aiogram.types import FSInputFile
+        from bot.services.ingestion.audio_resolver import audio_resolver
+        from bot.services.ingestion.base import TrackMetadata
+        from bot.services.ingestion.registry import provider_registry
+        from bot.services.channels import get_channel_service
+
+        async with get_session() as session:
+            track = await session.get(Track, track_id)
+            if not track:
+                return None
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                if custom_url:
+                    prov = provider_registry.find_provider(custom_url)
+                    if not prov:
+                        raise ValueError(f"No provider found for URL: {custom_url}")
+                    meta = TrackMetadata(
+                        provider_name=prov.name,
+                        url=custom_url,
+                        title=track.title or "Track",
+                        artist=track.artist or "Artist",
+                        duration=track.duration,
+                        cover_url=track.cover_url,
+                    )
+                    downloaded = await prov.download_track(meta, temp_dir)
+                else:
+                    meta = TrackMetadata(
+                        provider_name="system",
+                        url="",
+                        title=track.title or "Track",
+                        artist=track.artist or "Artist",
+                        duration=track.duration,
+                        cover_url=track.cover_url,
+                    )
+                    downloaded = await audio_resolver.resolve_and_download(meta, temp_dir=temp_dir)
+
+                dest_chat = target_chat_id
+                if not dest_chat and user_id:
+                    dest_chat = user_id
+                    try:
+                        channel_svc = get_channel_service()
+                        if channel_svc:
+                            user_ch = await channel_svc.get_user_channel(user_id)
+                            if user_ch and user_ch.is_active:
+                                dest_chat = user_ch.channel_id
+                    except Exception:
+                        pass
+
+                if not dest_chat:
+                    dest_chat = user_id
+
+                safe_filename = f"{track.artist} - {track.title}.mp3".replace("/", "-")
+                audio_input = FSInputFile(downloaded.audio_path, filename=safe_filename)
+                thumb_input = None
+                if downloaded.cover_path and os.path.exists(downloaded.cover_path):
+                    thumb_input = FSInputFile(downloaded.cover_path)
+
+                sent_msg = await bot.send_audio(
+                    chat_id=dest_chat,
+                    audio=audio_input,
+                    title=track.title,
+                    performer=track.artist,
+                    duration=downloaded.metadata.duration if downloaded.metadata else track.duration,
+                    thumbnail=thumb_input,
+                )
+
+                if not sent_msg or not sent_msg.audio:
+                    raise RuntimeError("Telegram failed to upload re-sourced audio")
+
+                track.file_id = sent_msg.audio.file_id
+                track.file_unique_id = sent_msg.audio.file_unique_id
+                track.duration = sent_msg.audio.duration or track.duration
+                track.file_size = sent_msg.audio.file_size or downloaded.file_size
+                track.is_unavailable = False
+                track.updated_at = utcnow()
+                await session.commit()
+                await session.refresh(track)
+                logger.info(f"Successfully re-sourced audio for track {track_id} ('{track.artist} - {track.title}')")
+                return track
+
 
 # Global instance
 track_service = TrackService()
