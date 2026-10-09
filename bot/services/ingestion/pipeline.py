@@ -165,7 +165,13 @@ async def _find_existing_track(
                 url_query = url_query.where(Track.is_chunk == False)
             url_track = await s.scalar(url_query)
             if url_track:
-                return url_track
+                # Sanity check: if searching for full track (not allow_chunk) and duration > 45,
+                # do not accept a track whose stored duration is <= 35 or file_size < 1MB as a full track!
+                if not allow_chunk and duration and duration > 45:
+                    if (url_track.duration and url_track.duration <= 35) or (url_track.file_size and url_track.file_size < 1000000 and (url_track.duration or 0) <= 45):
+                        url_track = None
+                if url_track:
+                    return url_track
 
         # 1. Search candidates by normalized artist or artist match
         query = select(Track).where(

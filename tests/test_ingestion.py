@@ -475,6 +475,62 @@ async def test_soundcloud_drm_fallback_to_audio_resolver(monkeypatch):
     assert audio.audio_path == "/tmp/fake_resolved.mp3"
 
 
+@pytest.mark.asyncio
+async def test_soundcloud_30s_preview_stream_triggers_audio_resolver_when_chunk_only_false(monkeypatch, tmp_path):
+    from bot.services.ingestion.providers.soundcloud import SoundCloudProvider
+    from bot.services.ingestion.base import DownloadedAudio
+    sc = SoundCloudProvider()
+
+    meta = TrackMetadata(
+        provider_name="soundcloud",
+        url="https://soundcloud.com/greenday/troubled-times",
+        title="Troubled Times",
+        artist="Green Day",
+        duration=184,
+        extra={"uploader": "Green Day", "is_soundcloud": True, "is_drm_preview": True},
+    )
+
+    class MockYDLPreview:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def extract_info(self, url, download=True):
+            (tmp_path / "audio.mp3").write_bytes(b"\x00" * 476055)
+            return {
+                "id": "123456",
+                "title": "Troubled Times",
+                "uploader": "Green Day",
+                "duration": 30.0,
+                "format_id": "http_mp3_0_0_preview",
+                "formats": [{"format_id": "http_mp3_0_0_preview"}],
+            }
+
+    import yt_dlp
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", MockYDLPreview)
+
+    called = {}
+    async def mock_resolve_and_download(track_meta, temp_dir, exclude_urls=None, progress_hook=None, **kwargs):
+        called["resolved"] = True
+        called["exclude_urls"] = exclude_urls
+        return DownloadedAudio(
+            audio_path="/tmp/fake_full_track.mp3",
+            metadata=track_meta,
+            file_size=5167929,
+            mime_type="audio/mpeg",
+        )
+
+    from bot.services.ingestion.audio_resolver import audio_resolver
+    monkeypatch.setattr(audio_resolver, "resolve_and_download", mock_resolve_and_download)
+
+    audio = await sc.download_track(meta, str(tmp_path), chunk_only=False)
+    assert called.get("resolved") is True
+    assert meta.url in called.get("exclude_urls", set())
+    assert audio.file_size == 5167929
+
+
 def test_exportify_csv_parsing():
     import csv
     import io

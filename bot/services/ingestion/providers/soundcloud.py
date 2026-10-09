@@ -337,12 +337,17 @@ class SoundCloudProvider(BaseMusicProvider):
         os.makedirs(temp_dir, exist_ok=True)
         out_template = os.path.join(temp_dir, "audio.%(ext)s")
 
+        is_known_drm = bool(track_meta.extra and track_meta.extra.get("is_drm_preview"))
+
         # Calculate preview range avoiding empty intros
         start_sec, end_sec = (0, chunk_duration)
         if chunk_only:
             if chunk_start is not None:
                 start_sec = max(0, chunk_start)
                 end_sec = start_sec + chunk_duration
+            elif is_known_drm:
+                # Go+ DRM preview streams are already a 30s snippet starting from 0
+                start_sec, end_sec = (0, chunk_duration)
             else:
                 start_sec, end_sec = calculate_preview_range(track_meta.duration, chunk_seconds=chunk_duration)
             logger.info(
@@ -368,7 +373,7 @@ class SoundCloudProvider(BaseMusicProvider):
                 except Exception:
                     pass
 
-        def _download():
+        def _download(range_override=None):
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": out_template,
@@ -385,8 +390,9 @@ class SoundCloudProvider(BaseMusicProvider):
                 "quiet": True,
                 "no_warnings": True,
             }
-            if chunk_only:
-                ydl_opts["download_ranges"] = download_range_func(None, [(start_sec, end_sec)])
+            active_range = range_override or ([(start_sec, end_sec)] if chunk_only else None)
+            if active_range:
+                ydl_opts["download_ranges"] = download_range_func(None, active_range)
                 ydl_opts["force_keyframes_at_cuts"] = True
 
             try:
@@ -402,21 +408,32 @@ class SoundCloudProvider(BaseMusicProvider):
         try:
             info_dict = await asyncio.to_thread(_download)
         except Exception as e:
-            if "drm protected" in str(e).lower() or "DRM_PROTECTED" in str(e):
-                logger.info(
-                    f"SoundCloud DRM encountered for '{track_meta.artist} - {track_meta.title}'. "
-                    f"Resolving unencrypted alternative stream..."
-                )
-                from ..audio_resolver import audio_resolver
+            err_lower = str(e).lower()
+            # If cutting ranges failed (e.g. seeking beyond 30s stream), retry without seeking if chunk_only
+            if chunk_only and start_sec > 0 and ("ffmpeg exited" in err_lower or "download error" in err_lower):
                 try:
-                    return await audio_resolver.resolve_and_download(
-                        track_meta, temp_dir, exclude_urls={track_meta.url}, progress_hook=progress_hook,
-                        chunk_only=chunk_only, chunk_duration=chunk_duration, chunk_start=chunk_start,
+                    logger.info(f"[SoundCloud] Range cut failed for '{track_meta.title}', retrying with 0..{chunk_duration}s...")
+                    info_dict = await asyncio.to_thread(_download, [(0, chunk_duration)])
+                except Exception as retry_err:
+                    e = retry_err
+                    err_lower = str(retry_err).lower()
+
+            if info_dict is None:
+                if "drm protected" in err_lower or "drm_protected" in err_lower or "ffmpeg exited" in err_lower or is_known_drm:
+                    logger.info(
+                        f"SoundCloud DRM or stream error encountered for '{track_meta.artist} - {track_meta.title}'. "
+                        f"Resolving unencrypted alternative stream..."
                     )
-                except Exception as resolve_err:
-                    logger.warning(f"AudioResolver fallback failed for '{track_meta.title}': {resolve_err}")
-                    raise ValueError("Этот трек защищён DRM (SoundCloud Go+) и недоступен для бесплатного воспроизведения.") from e
-            raise
+                    from ..audio_resolver import audio_resolver
+                    try:
+                        return await audio_resolver.resolve_and_download(
+                            track_meta, temp_dir, exclude_urls={track_meta.url}, progress_hook=progress_hook,
+                            chunk_only=chunk_only, chunk_duration=chunk_duration, chunk_start=chunk_start,
+                        )
+                    except Exception as resolve_err:
+                        logger.warning(f"AudioResolver fallback failed for '{track_meta.title}': {resolve_err}")
+                        raise ValueError("Этот трек защищён DRM (SoundCloud Go+) и недоступен для бесплатного воспроизведения.") from e
+                raise
 
         # Expected output is audio.mp3
         expected_audio = os.path.join(temp_dir, "audio.mp3")
@@ -429,6 +446,55 @@ class SoundCloudProvider(BaseMusicProvider):
 
         if not os.path.exists(expected_audio):
             raise FileNotFoundError(f"Failed to download audio for track: {track_meta.title}")
+
+        # Check for SoundCloud Go+ DRM preview stream
+        is_known_drm = bool(track_meta.extra and track_meta.extra.get("is_drm_preview"))
+        formats = (info_dict.get("formats") or []) if isinstance(info_dict, dict) else []
+        selected_fmt = (info_dict.get("format_id") or "") if isinstance(info_dict, dict) else ""
+        has_only_preview_formats = bool(formats) and all("_preview" in str(f.get("format_id", "")) for f in formats)
+        is_preview_format = "_preview" in selected_fmt or has_only_preview_formats
+        info_dur = info_dict.get("duration") if isinstance(info_dict, dict) else None
+        is_30s_preview_duration = info_dur is not None and abs(info_dur - 30.0) < 1.0
+
+        actual_length = None
+        try:
+            import mutagen
+            mut_file = mutagen.File(expected_audio)
+            if mut_file and mut_file.info and getattr(mut_file.info, "length", None):
+                actual_length = float(mut_file.info.length)
+        except Exception:
+            actual_length = None
+
+        expected_duration = track_meta.duration or (track_meta.extra.get("real_duration") if track_meta.extra else None)
+
+        is_drm_preview_stream = (
+            is_known_drm
+            or is_preview_format
+            or (is_30s_preview_duration and ((expected_duration or 0) > 45 or not chunk_only))
+            or (actual_length is not None and actual_length <= 35.0 and (expected_duration or 0) > 45)
+        )
+
+        # CRITICAL: If user requested full track but SoundCloud only provided a 30s preview snippet,
+        # do NOT save the snippet as a full track! Fall back to AudioResolver to find the unencrypted full track.
+        if is_drm_preview_stream and not chunk_only:
+            logger.info(
+                f"[SoundCloud] Detected 30s DRM Go+ preview stream for '{track_meta.artist} - {track_meta.title}'. "
+                f"Falling back to AudioResolver to source unencrypted full audio stream..."
+            )
+            from ..audio_resolver import audio_resolver
+            try:
+                return await audio_resolver.resolve_and_download(
+                    track_meta,
+                    temp_dir,
+                    exclude_urls={track_meta.url},
+                    progress_hook=progress_hook,
+                    chunk_only=False,
+                    chunk_duration=chunk_duration,
+                    chunk_start=chunk_start,
+                )
+            except Exception as resolve_err:
+                logger.warning(f"AudioResolver fallback failed for '{track_meta.title}': {resolve_err}")
+                raise ValueError("Этот трек защищён DRM (SoundCloud Go+) и недоступен для бесплатного воспроизведения.")
 
         file_size = os.path.getsize(expected_audio)
 
@@ -480,10 +546,16 @@ class SoundCloudProvider(BaseMusicProvider):
                 cover_path = None
 
         if chunk_only:
-            if track_meta.duration and track_meta.duration > chunk_duration:
+            if expected_duration and expected_duration > chunk_duration:
+                track_meta.extra["full_duration"] = expected_duration
+            elif track_meta.duration and track_meta.duration > chunk_duration:
                 track_meta.extra["full_duration"] = track_meta.duration
-            track_meta.duration = chunk_duration
+            track_meta.duration = int(round(actual_length)) if actual_length else chunk_duration
             track_meta.extra["is_chunk"] = True
+        else:
+            if actual_length:
+                track_meta.duration = int(round(actual_length))
+            track_meta.extra["is_chunk"] = False
 
         return DownloadedAudio(
             audio_path=expected_audio,

@@ -79,6 +79,7 @@ class QuickImportRequest(BaseModel):
     tags: Optional[List[str]] = None
     add_to_library: bool = False
     preview_only: bool = False
+    is_drm_preview: Optional[bool] = False
 
 
 class QuickImportResponse(BaseModel):
@@ -618,6 +619,8 @@ async def quick_import_track(
         extra_data["genre"] = req.genre
     if req.tags:
         extra_data["tags"] = req.tags
+    if req.is_drm_preview:
+        extra_data["is_drm_preview"] = True
     if "soundcloud" in req.url:
         extra_data["is_soundcloud"] = True
 
@@ -669,8 +672,10 @@ async def quick_import_track(
         target_chat = settings.scanner_buffer_chat_id or user.id
 
         effective_meta = downloaded.metadata or track_meta
+        actual_is_chunk = is_chunk_download or bool(effective_meta.extra.get("is_chunk"))
+        final_duration = effective_meta.duration
 
-        prefix = "[Preview] " if is_chunk_download else ""
+        prefix = "[Preview] " if actual_is_chunk else ""
         safe_filename = f"{prefix}{effective_meta.artist} - {effective_meta.title}.mp3".replace("/", "-")
         audio_input = FSInputFile(downloaded.audio_path, filename=safe_filename)
         thumb_input = None
@@ -681,9 +686,9 @@ async def quick_import_track(
             sent_msg = await bot.send_audio(
                 chat_id=target_chat,
                 audio=audio_input,
-                title=f"{effective_meta.title}{' (Preview)' if is_chunk_download else ''}",
+                title=f"{effective_meta.title}{' (Preview)' if actual_is_chunk else ''}",
                 performer=effective_meta.artist,
-                duration=effective_meta.duration,
+                duration=final_duration,
                 thumbnail=thumb_input,
             )
         except Exception as e:
@@ -701,10 +706,10 @@ async def quick_import_track(
             )
 
         # If upgrading an existing chunk track to full, update chunk track directly in DB first
-        if not is_chunk_download and existing_chunk and existing_chunk.is_chunk:
+        if not actual_is_chunk and existing_chunk and existing_chunk.is_chunk:
             existing_chunk.file_id = sent_msg.audio.file_id
             existing_chunk.file_unique_id = sent_msg.audio.file_unique_id
-            existing_chunk.duration = sent_msg.audio.duration or effective_meta.duration
+            existing_chunk.duration = sent_msg.audio.duration or final_duration
             existing_chunk.file_size = sent_msg.audio.file_size or downloaded.file_size
             existing_chunk.is_chunk = False
             existing_chunk.file_name = safe_filename
@@ -717,16 +722,16 @@ async def quick_import_track(
             file_unique_id=sent_msg.audio.file_unique_id,
             title=effective_meta.title,
             artist=effective_meta.artist,
-            duration=sent_msg.audio.duration or effective_meta.duration,
+            duration=sent_msg.audio.duration or final_duration,
             file_size=sent_msg.audio.file_size or downloaded.file_size,
             mime_type=sent_msg.audio.mime_type or "audio/mpeg",
             file_name=safe_filename,
             forward_source_type=ForwardSourceType.BOT,
             forward_source_name=provider.name,
             library_source=LibrarySource.UPLOADED,
-            enrich=not is_chunk_download,
-            add_to_library=req.add_to_library and not is_chunk_download,
-            is_chunk=is_chunk_download,
+            enrich=not actual_is_chunk,
+            add_to_library=req.add_to_library and not actual_is_chunk,
+            is_chunk=actual_is_chunk,
             source_url=req.url,
             cover_url=effective_meta.cover_url,
             genre=effective_meta.extra.get("genre"),
@@ -736,7 +741,7 @@ async def quick_import_track(
         )
 
         # Auto-forward to user's Telegram backup channel ONLY if add_to_library is True and not chunk
-        if req.add_to_library and not is_chunk_download:
+        if req.add_to_library and not actual_is_chunk:
             try:
                 from bot.services.channels import get_channel_service
                 ch_svc = get_channel_service()

@@ -95,6 +95,7 @@ export const useTasksStore = defineStore('tasks', () => {
       genre: track.genre,
       tags: track.tags,
       source: source || 'soundcloud',
+      is_drm_preview: Boolean(track.is_drm_preview),
       rawTrack: track,
     }
 
@@ -155,6 +156,7 @@ export const useTasksStore = defineStore('tasks', () => {
         cover_url: item.cover_url,
         genre: item.genre,
         tags: item.tags,
+        is_drm_preview: item.is_drm_preview,
         add_to_library: true,
         preview_only: false,
       })

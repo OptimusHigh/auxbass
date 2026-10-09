@@ -222,11 +222,24 @@ class AudioResolver:
 
         file_size = os.path.getsize(downloaded_audio_path)
 
+        # Check real length with mutagen to keep metadata accurate
+        try:
+            import mutagen
+            mut_file = mutagen.File(downloaded_audio_path)
+            if mut_file and mut_file.info and getattr(mut_file.info, "length", None):
+                actual_track_len = float(mut_file.info.length)
+                if not chunk_only:
+                    track_meta.duration = int(round(actual_track_len))
+        except Exception:
+            pass
+
         if chunk_only:
             if track_meta.duration and track_meta.duration > chunk_duration:
                 track_meta.extra["full_duration"] = track_meta.duration
             track_meta.duration = chunk_duration
             track_meta.extra["is_chunk"] = True
+        else:
+            track_meta.extra["is_chunk"] = False
 
         return DownloadedAudio(
             audio_path=downloaded_audio_path,
@@ -462,6 +475,25 @@ class AudioResolver:
 
         if not os.path.exists(expected_audio):
             raise FileNotFoundError(f"Failed to extract audio from resolved stream: {url}")
+
+        if not chunk_only:
+            actual_len = None
+            try:
+                import mutagen
+                mut_file = mutagen.File(expected_audio)
+                if mut_file and mut_file.info and getattr(mut_file.info, "length", None):
+                    actual_len = float(mut_file.info.length)
+            except Exception:
+                pass
+            expected_dur = total_duration or 0
+            if actual_len is not None and actual_len <= 35.0 and expected_dur > 45:
+                try:
+                    os.remove(expected_audio)
+                except Exception:
+                    pass
+                raise ValueError(
+                    f"Candidate stream '{url}' returned a 30s preview snippet ({actual_len:.1f}s), not a full track"
+                )
 
         return expected_audio
 
