@@ -92,33 +92,55 @@ class AudioResolver:
         matched_candidate_url = None
 
         # =========================================================================
-        # PHASE 1: Try SoundCloud candidates (with retry loop over multiple entries)
+        # Concurrently search both SoundCloud and YouTube Music candidates
         # =========================================================================
-        sc_candidates = await self._search_candidates(search_query, limit=10)
-        ranked_sc = self._rank_candidates(track_meta, sc_candidates, exclude_set)
+        sc_task = self._search_candidates(search_query, limit=10)
+        yt_task = self._search_youtube_candidates(search_query, limit=10)
 
-        if not ranked_sc and first_artist != track_meta.artist:
-            alt_query = f"{first_artist} {track_meta.title}".strip()
-            more_sc = await self._search_candidates(alt_query, limit=10)
-            ranked_sc = self._rank_candidates(track_meta, more_sc, exclude_set)
+        sc_candidates, yt_candidates = await asyncio.gather(sc_task, yt_task, return_exceptions=True)
+        all_candidates = []
+        if isinstance(sc_candidates, list):
+            all_candidates.extend(sc_candidates)
+        if isinstance(yt_candidates, list):
+            all_candidates.extend(yt_candidates)
+
+        ranked = self._rank_candidates(track_meta, all_candidates, exclude_set)
 
         is_studio = not bool(extract_version_markers(track_meta.title))
 
-        for cand in ranked_sc:
-            # If user wanted studio version, do not settle for a mismatched candidate if YouTube can have studio
-            if is_studio and cand.get("_penalty", 0) > 150:
-                logger.info(
-                    f"[AudioResolver] Skipping mismatched SoundCloud candidate '{cand.get('title')}' "
-                    f"(penalty={cand.get('_penalty')}), checking other candidates or YouTube..."
-                )
-                continue
+        # Ensure we have resilient alternative candidates if primary pool is small or sub-optimal
+        best_penalty = ranked[0].get("_penalty", 999.0) if ranked else 999.0
+        if len(ranked) < 3 or best_penalty > 40.0:
+            more_queries = []
+            if is_studio:
+                more_queries.append(f"{first_artist} {track_meta.title} audio".strip())
+            if first_artist != track_meta.artist:
+                more_queries.append(f"{first_artist} {track_meta.title}".strip())
+            more_queries.append(f"{track_meta.artist} {track_meta.title} topic".strip())
 
+            seen_urls = {c.get("webpage_url") or c.get("url") for c in ranked}
+            for q in more_queries:
+                try:
+                    more_yt = await self._search_youtube_candidates(q, limit=6)
+                    for mc in self._rank_candidates(track_meta, more_yt, exclude_set):
+                        mc_url = mc.get("webpage_url") or mc.get("url")
+                        if mc_url and mc_url not in seen_urls:
+                            seen_urls.add(mc_url)
+                            ranked.append(mc)
+                except Exception as q_err:
+                    logger.debug(f"[AudioResolver] Auxiliary YouTube query '{q}' failed: {q_err}")
+
+            ranked.sort(key=lambda x: x.get("_penalty", 999.0))
+
+        for cand in ranked:
             cand_url = cand.get("webpage_url") or cand.get("url")
-            cand_title = cand.get("title") or "SoundCloud Track"
+            if not cand_url and cand.get("id"):
+                cand_url = f"https://www.youtube.com/watch?v={cand['id']}"
+            cand_title = cand.get("title") or "Track"
             try:
                 logger.info(
-                    f"[AudioResolver] Trying SoundCloud candidate for '{track_meta.artist} - {track_meta.title}': "
-                    f"'{cand_title}' ({cand_url})"
+                    f"[AudioResolver] Trying candidate for '{track_meta.artist} - {track_meta.title}': "
+                    f"'{cand_title}' ({cand_url}) [penalty={cand.get('_penalty', 0):.1f}]"
                 )
                 downloaded_audio_path = await self._download_stream(
                     cand_url, temp_dir, progress_hook=progress_hook,
@@ -130,64 +152,7 @@ class AudioResolver:
                 break
             except Exception as e:
                 err_clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', str(e))
-                logger.warning(f"[AudioResolver] SoundCloud candidate '{cand_title}' failed: {err_clean}. Trying next candidate...")
-
-        # =========================================================================
-        # PHASE 2: Fallback to YouTube Music / YouTube
-        # =========================================================================
-        if not downloaded_audio_path:
-            logger.info(
-                f"[AudioResolver] SoundCloud candidates unavailable, DRM-protected, or version-mismatched for "
-                f"'{track_meta.artist} - {track_meta.title}'. Falling back to YouTube Music..."
-            )
-            yt_candidates = await self._search_youtube_candidates(search_query, limit=10)
-            ranked_yt = self._rank_candidates(track_meta, yt_candidates, exclude_set)
-
-            # Ensure we have resilient alternative candidates if primary pool is small or sub-optimal
-            best_penalty = ranked_yt[0].get("_penalty", 999.0) if ranked_yt else 999.0
-            if len(ranked_yt) < 3 or best_penalty > 80.0:
-                more_queries = []
-                if is_studio:
-                    more_queries.append(f"{first_artist} {track_meta.title} audio".strip())
-                if first_artist != track_meta.artist:
-                    more_queries.append(f"{first_artist} {track_meta.title}".strip())
-                more_queries.append(f"{track_meta.artist} {track_meta.title} topic".strip())
-
-                seen_urls = {c.get("webpage_url") or c.get("url") for c in ranked_yt}
-                for q in more_queries:
-                    try:
-                        more_yt = await self._search_youtube_candidates(q, limit=6)
-                        for mc in self._rank_candidates(track_meta, more_yt, exclude_set):
-                            mc_url = mc.get("webpage_url") or mc.get("url")
-                            if mc_url and mc_url not in seen_urls:
-                                seen_urls.add(mc_url)
-                                ranked_yt.append(mc)
-                    except Exception as q_err:
-                        logger.debug(f"[AudioResolver] Auxiliary YouTube query '{q}' failed: {q_err}")
-
-                ranked_yt.sort(key=lambda x: x.get("_penalty", 999.0))
-
-            for cand in ranked_yt:
-                cand_url = cand.get("webpage_url") or cand.get("url")
-                if not cand_url and cand.get("id"):
-                    cand_url = f"https://www.youtube.com/watch?v={cand['id']}"
-                cand_title = cand.get("title") or "YouTube Track"
-                try:
-                    logger.info(
-                        f"[AudioResolver] Trying YouTube candidate for '{track_meta.artist} - {track_meta.title}': "
-                        f"'{cand_title}' ({cand_url})"
-                    )
-                    downloaded_audio_path = await self._download_stream(
-                        cand_url, temp_dir, progress_hook=progress_hook,
-                        chunk_only=chunk_only, chunk_duration=chunk_duration,
-                        chunk_start=chunk_start, total_duration=track_meta.duration,
-                    )
-                    matched_candidate_title = cand_title
-                    matched_candidate_url = cand_url
-                    break
-                except Exception as e:
-                    err_clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', str(e))
-                    logger.warning(f"[AudioResolver] YouTube candidate '{cand_title}' failed: {err_clean}. Trying next candidate...")
+                logger.warning(f"[AudioResolver] Candidate '{cand_title}' failed: {err_clean}. Trying next candidate...")
 
         if not downloaded_audio_path or not os.path.exists(downloaded_audio_path):
             raise ValueError(
@@ -306,6 +271,9 @@ class AudioResolver:
             if isinstance(tags_list, list):
                 target_markers |= extract_version_markers(" ".join(str(t) for t in tags_list if t))
 
+        clean_target_artist = target.artist.lower().strip()
+        first_artist = clean_target_artist.split(",")[0].split(" feat")[0].split(" ft")[0].strip()
+
         for c in candidates:
             if not isinstance(c, dict):
                 continue
@@ -318,7 +286,16 @@ class AudioResolver:
 
             cand_dur = int(c.get("duration") or 0)
             cand_title = c.get("title") or ""
-            cand_uploader = (c.get("uploader") or c.get("channel") or "")
+            cand_uploader = (c.get("uploader") or c.get("channel") or "").strip()
+
+            # If uploader not present in flat entry, try extracting from soundcloud URL path
+            if not cand_uploader and "soundcloud.com/" in cand_url:
+                match = re.search(r'soundcloud\.com/([^/]+)', cand_url)
+                if match and match.group(1) not in ("discover", "stream", "search"):
+                    cand_uploader = match.group(1).replace("-", " ")
+
+            cand_uploader_lower = cand_uploader.lower()
+            cand_title_lower = cand_title.lower()
 
             # Check duration difference
             if target.duration and cand_dur:
@@ -326,7 +303,7 @@ class AudioResolver:
                 if diff > self.MAX_DURATION_DIFF_SECONDS:
                     # Allow relaxed fallback tier up to 35s diff if title is a high-confidence match
                     clean_target_t = target.title.lower()
-                    clean_cand_t = cand_title.lower()
+                    clean_cand_t = cand_title_lower
                     if diff <= 35 and (fuzzy_match_title(target.title, cand_title) >= 0.7 or clean_target_t in clean_cand_t):
                         diff += 60.0  # Heavy penalty so exact duration matches take priority
                     else:
@@ -336,7 +313,7 @@ class AudioResolver:
 
             # Check title similarity
             title_score = fuzzy_match_title(target.title, cand_title)
-            if title_score < 0.35 and target.title.lower() not in cand_title.lower():
+            if title_score < 0.35 and target.title.lower() not in cand_title_lower:
                 continue
 
             cand_markers = extract_version_markers(cand_title)
@@ -345,25 +322,53 @@ class AudioResolver:
             version_penalty = 0.0
             version_bonus = 0.0
 
+            # Heavy penalty for covers, karaoke, tributes, bootlegs, nightcore unless target asked for them
+            if any(k in cand_title_lower for k in ("cover", "tribute", "karaoke", "bootleg", "slowed", "reverb", "nightcore", "speed up")):
+                if not any(k in target.title.lower() for k in ("cover", "tribute", "karaoke", "bootleg", "slowed", "reverb", "nightcore", "speed up")):
+                    version_penalty += 400.0
+
             if target_markers != cand_markers or not are_version_details_compatible(target.title, cand_title):
                 # Version mismatch (e.g. user wants studio, candidate is live, or vice-versa, or different remix)
-                version_penalty = 250.0
+                version_penalty += 250.0
             else:
                 # Both versions agree (e.g. both are live, or both are studio, or same remix)
                 if target_markers:
                     version_bonus -= 15.0
 
             # Studio official upload bonuses (Artist - Topic or Official Audio)
-            if not target_markers:
-                if cand_uploader.lower().endswith(" - topic"):
-                    version_bonus -= 30.0  # Official album upload by YouTube Music
-                elif "(official audio)" in cand_title.lower() or "[official audio]" in cand_title.lower():
-                    version_bonus -= 20.0
-                elif "(audio)" in cand_title.lower() or "[audio]" in cand_title.lower():
-                    version_bonus -= 10.0
+            is_topic = cand_uploader_lower.endswith(" - topic")
+            clean_uploader_nospace = cand_uploader_lower.replace(" ", "")
+            clean_artist_nospace = clean_target_artist.replace(" ", "")
+            first_artist_nospace = first_artist.replace(" ", "")
+
+            is_artist = (
+                cand_uploader_lower == clean_target_artist
+                or cand_uploader_lower == first_artist
+                or clean_target_artist in cand_uploader_lower
+                or (len(first_artist) > 3 and first_artist in cand_uploader_lower)
+                or (len(clean_artist_nospace) > 3 and clean_artist_nospace in clean_uploader_nospace)
+                or (len(first_artist_nospace) > 3 and first_artist_nospace in clean_uploader_nospace)
+            )
+
+            if is_topic:
+                version_bonus -= 60.0  # Official distributor album upload on YouTube Music
+            elif is_artist:
+                version_bonus -= 45.0  # Official artist channel upload
+            else:
+                version_penalty += 35.0  # Third-party reupload penalty
+
+            # Official title markers
+            if any(k in cand_title_lower for k in (
+                "(official audio)", "[official audio]",
+                "(official video)", "[official video]",
+                "(official lyric video)", "[official lyric video]"
+            )):
+                version_bonus -= 25.0
+            elif any(k in cand_title_lower for k in ("(audio)", "[audio]", "(lyric video)", "[lyric video]")):
+                version_bonus -= 10.0
 
             # Total penalty: lower is better
-            total_penalty = diff + (1.0 - title_score) * 20 + version_penalty + version_bonus
+            total_penalty = diff * 1.5 + (1.0 - title_score) * 20 + version_penalty + version_bonus
             c_with_score = dict(c)
             c_with_score["_penalty"] = total_penalty
             valid_candidates.append((total_penalty, c_with_score))
