@@ -815,9 +815,9 @@ onMounted(async () => {
       } else if (startParam === 'minecraft_media') {
         // Minecraft deep-link: open system playlist (ensure it exists via auth ensure)
         try {
-          const { default: api } = await import('@/utils/api.js')
-          // Fetch my playlists and find system one, or fallback to /api/minecraft/playlist/me via ensure
-          const resp = await api.get('/playlists')
+          const { playlistsApi } = await import('@/api')
+          // Fetch my playlists and find system one
+          const resp = await playlistsApi.getAll()
           const items = resp.data?.items || resp.data || []
           const sys = items.find(pl => pl.is_system)
           if (sys) {
