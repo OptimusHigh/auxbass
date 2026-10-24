@@ -24,7 +24,7 @@ from shared.models import Track, UserLibrary, ChannelMessage, ChannelMessageStat
 from shared.matching import normalize_title, normalize_artist
 
 from .auth import get_current_user
-from api.utils.responses import is_streamable, HD_MIME_TYPES
+from api.utils.responses import is_streamable, HD_MIME_TYPES, get_max_streamable_size
 from api.utils.bot_helpers import get_http_session, close_http_session, get_session_stats
 from api.schemas.player import StreamUrlResponse, DownloadPlaylistRequest
 from api.schemas.common import TelegramUser
@@ -535,8 +535,9 @@ async def get_stream_url(
     hd_track_info = None
     
     file_size_mb = (original_track.file_size or 0) / (1024 * 1024)
+    max_mb = get_max_streamable_size() / (1024 * 1024)
     is_track_hd = not is_streamable(original_track.mime_type)
-    is_track_too_large = file_size_mb > 20
+    is_track_too_large = file_size_mb > max_mb
     
     if is_track_hd or is_track_too_large:
         # This is an HD track or too large - try to find MP3 alternative
@@ -568,20 +569,20 @@ async def get_stream_url(
             else:
                 raise HTTPException(
                     status_code=503,
-                    detail=f"Файл слишком большой ({file_size_mb:.1f} MB). MP3 версия не найдена. Используйте кнопку 'Скачать' в боте."
+                    detail=f"Файл слишком большой ({file_size_mb:.1f} MB, максимум {int(max_mb)} MB). MP3 версия не найдена. Используйте кнопку 'Скачать' в боте."
                 )
     
     # Verify file is accessible (pre-cache the path)
     file_path = await get_telegram_file_path(track.file_id)
     
     if not file_path:
-        # Check if file is too large (>20MB limit for standard Bot API)
+        # Check if file exceeds max streamable limit
         file_size_mb = (track.file_size or 0) / (1024 * 1024)
-        if file_size_mb > 20:
-            logger.warning(f"[Stream Request] Track {track.id} too large: {file_size_mb:.1f} MB")
+        if file_size_mb > max_mb:
+            logger.warning(f"[Stream Request] Track {track.id} too large: {file_size_mb:.1f} MB (max {max_mb:.0f} MB)")
             raise HTTPException(
                 status_code=503,
-                detail=f"Файл слишком большой ({file_size_mb:.1f} MB). Telegram Bot API поддерживает скачивание только файлов до 20 MB. Используйте кнопку 'Скачать' в боте."
+                detail=f"Файл слишком большой ({file_size_mb:.1f} MB). Максимальный размер для воспроизведения: {int(max_mb)} MB."
             )
         
         # Try to refresh file_id from channel message
@@ -648,6 +649,11 @@ async def get_stream_url(
                 detail=detail_msg
             )
     
+    # Auto-heal: if track was erroneously marked unavailable, clear the flag
+    if track.is_unavailable:
+        track.is_unavailable = False
+        await db.commit()
+
     # Generate secure temporary token with cached file_path
     token = generate_stream_token(track.id, user.id, file_path)
     
@@ -901,10 +907,11 @@ async def get_batch_stream_urls(
     async def get_file_path_for_track(track):
         try:
             file_size_mb = (track.file_size or 0) / (1024 * 1024)
+            max_mb = get_max_streamable_size() / (1024 * 1024)
             is_track_hd = not is_streamable(track.mime_type)
-            is_too_large = file_size_mb > 20
+            is_too_large = file_size_mb > max_mb
 
-            # If HD or >20MB, try to find streamable alternative first
+            # If HD or >max_mb, try to find streamable alternative first
             if is_track_hd or is_too_large:
                 alt = await find_streamable_alternative(track, db)
                 if alt:
@@ -966,6 +973,10 @@ async def get_batch_stream_urls(
             track.file_id = new_file_id
             track.is_unavailable = False
             tracks_to_update.append(track_id)
+        elif file_path and track and track.is_unavailable:
+            # Auto-heal: file path resolved successfully, clear unavailable flag
+            track.is_unavailable = False
+            tracks_to_update.append(track_id)
         elif not file_path and track and not track.is_unavailable and not is_hd_or_large:
             # Do NOT mark tracks created within the last 10 minutes as unavailable
             # (they may be actively importing or propagating to Telegram CDN)
@@ -1011,8 +1022,9 @@ async def get_batch_stream_urls(
         if isinstance(file_path, Exception) or not file_path:
             # Check if file is too large
             file_size_mb = (track.file_size or 0) / (1024 * 1024)
-            if file_size_mb > 20:
-                error_msg = f"File too large ({file_size_mb:.1f}MB)"
+            max_mb = get_max_streamable_size() / (1024 * 1024)
+            if file_size_mb > max_mb:
+                error_msg = f"File too large ({file_size_mb:.1f}MB, max {int(max_mb)}MB)"
             elif track.is_unavailable:
                 error_msg = "Track unavailable - re-upload required"
             else:
