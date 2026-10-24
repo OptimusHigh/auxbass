@@ -152,16 +152,13 @@ async def get_minecraft_playlist(
         puuid = str(pack_uuid_for_track(tr.id))
         sha1 = get_cached_sha1(tr.id)
         if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
-            try:
-                res = await ensure_pack_for_track(
-                    tr.id, tr.file_id, tr.title or "", 
-                    duration=tr.duration, 
-                    cover_ref=_extract_cover_ref(tr)
-                )
-                if res:
-                    _, sha1 = res
-            except Exception as e:
-                logger.warning(f"Failed to pre-ensure pack for track {tr.id}: {e}")
+            # Warm up pack in background without blocking the playlist response
+            import asyncio
+            asyncio.create_task(ensure_pack_for_track(
+                tr.id, tr.file_id, tr.title or "", 
+                duration=tr.duration, 
+                cover_ref=_extract_cover_ref(tr)
+            ))
         # Build pack URL: GET /api/minecraft/packs/{track_id}.zip
         pack_url = f"{base_url}/api/minecraft/packs/{tr.id}.zip"
         tracks.append(TrackManifestItem(
