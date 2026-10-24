@@ -77,54 +77,119 @@ _transcode_semaphore = asyncio.Semaphore(1)
 
 
 def generate_vinyl_texture(cover_bytes: Optional[bytes] = None) -> bytes:
-    """Generate authentic 16x16 Minecraft vinyl disc texture with pixelated cover."""
+    """
+    Generate 64x64 transparent CD Jewel Case with full silkscreen picture disc print.
+    Features:
+    - Transparent tinted acrylic case with glass specular reflections
+    - Left black hinge spine
+    - 48px Compact Disc with iridescent silver rim and spindle hub
+    - Full-color album cover print across the disc surface (picture disc)
+    """
     try:
+        import math
         from PIL import Image, ImageDraw
-        img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+
+        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Draw vinyl grooved body
-        for y in range(16):
-            for x in range(16):
-                dx = x - 7.5
-                dy = y - 7.5
-                dist = (dx * dx + dy * dy) ** 0.5
-                if 1.2 <= dist <= 6.8:
-                    val = 24 if int(dist * 2.2) % 2 == 0 else 38
-                    draw.point((x, y), fill=(val, val, val, 255))
+        # Jewel Case bounds: 56x56 (from x=4, y=4 to x=59, y=59)
+        x0, y0, x1, y1 = 4, 4, 59, 59
 
-        # Outer edge rim
-        rim_points = [
-            (5,1),(6,1),(7,1),(8,1),(9,1),(10,1),
-            (3,2),(4,2),(11,2),(12,2),
-            (2,3),(13,3),(2,4),(13,4),
-            (1,5),(14,5),(1,6),(14,6),(1,7),(14,7),(1,8),(14,8),(1,9),(14,9),(1,10),(14,10),
-            (2,11),(13,11),(2,12),(13,12),
-            (3,13),(4,13),(11,13),(12,13),
-            (5,14),(6,14),(7,14),(8,14),(9,14),(10,14)
-        ]
-        for p in rim_points:
-            draw.point(p, fill=(18, 18, 18, 255))
+        # 1. Subtle soft shadow underneath
+        draw.rounded_rectangle([x0 + 1, y0 + 1, x1 + 1, y1 + 1], radius=3, fill=(10, 10, 14, 110))
 
-        # Draw label if cover provided
+        # 2. Transparent dark tinted plastic case base
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=3, fill=(28, 30, 35, 175))
+
+        # 3. Compact Disc (Center cx=33, cy=31.5, Radius R=23)
+        cx, cy = 33.0, 31.5
+        R_outer = 23.0
+        R_inner_hub = 8.0
+        R_hole = 3.5
+
+        disc_img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+        disc_draw = ImageDraw.Draw(disc_img)
+
+        # Base disc geometry
+        for y in range(8, 56):
+            for x in range(10, 58):
+                dx = x - cx
+                dy = y - cy
+                dist = math.hypot(dx, dy)
+                if dist <= R_outer:
+                    if dist >= R_outer - 1.2:
+                        disc_draw.point((x, y), fill=(225, 230, 240, 255))
+                    elif dist <= R_hole:
+                        pass
+                    elif dist <= R_inner_hub:
+                        disc_draw.point((x, y), fill=(160, 170, 185, 140))
+                    else:
+                        disc_draw.point((x, y), fill=(30, 30, 35, 255))
+
+        # Full Picture Disc: Silk-screen print of album artwork
+        cover_img = None
         if cover_bytes:
             try:
-                cimg = Image.open(io.BytesIO(cover_bytes)).convert("RGBA")
-                cimg = cimg.resize((6, 6), Image.Resampling.LANCZOS)
-                for cy in range(6):
-                    for cx in range(6):
-                        dx = cx - 2.5
-                        dy = cy - 2.5
-                        if dx * dx + dy * dy <= 6.5:
-                            px = cimg.getpixel((cx, cy))
-                            img.putpixel((cx + 5, cy + 5), px)
-            except Exception as e:
-                logger.debug(f"Cover label overlay failed: {e}")
+                cover_img = Image.open(io.BytesIO(cover_bytes)).convert("RGBA")
+            except Exception:
+                cover_img = None
 
-        # Spindle hole (center)
-        for sx in (7, 8):
-            for sy in (7, 8):
-                img.putpixel((sx, sy), (0, 0, 0, 0))
+        if cover_img:
+            print_size = int((R_outer - 1.0) * 2)
+            cover_resized = cover_img.resize((print_size, print_size), Image.Resampling.LANCZOS)
+            for y in range(8, 56):
+                for x in range(10, 58):
+                    dx = x - cx
+                    dy = y - cy
+                    dist = math.hypot(dx, dy)
+                    if R_inner_hub < dist <= R_outer - 1.2:
+                        u = int(dx + R_outer - 1.0)
+                        v = int(dy + R_outer - 1.0)
+                        if 0 <= u < print_size and 0 <= v < print_size:
+                            cp = cover_resized.getpixel((u, v))
+                            disc_draw.point((x, y), fill=(cp[0], cp[1], cp[2], 255))
+        else:
+            # Iridescent silver CD rainbow
+            for y in range(8, 56):
+                for x in range(10, 58):
+                    dx = x - cx
+                    dy = y - cy
+                    dist = math.hypot(dx, dy)
+                    if R_inner_hub < dist <= R_outer - 1.2:
+                        angle = (math.atan2(dy, dx) + math.pi) / (2 * math.pi)
+                        v = int((math.sin(angle * 10) * 0.5 + 0.5) * 60) + 170
+                        disc_draw.point((x, y), fill=(v, v + 12, v + 25, 255))
+
+        # Hub teeth / plastic spindle clips
+        for a in range(0, 360, 45):
+            rad = math.radians(a)
+            tx = int(cx + 6.0 * math.cos(rad))
+            ty = int(cy + 6.0 * math.sin(rad))
+            disc_draw.point((tx, ty), fill=(245, 250, 255, 200))
+
+        img = Image.alpha_composite(img, disc_img)
+        draw = ImageDraw.Draw(img)
+
+        # 4. Spine on the left edge (black ribbed plastic hinge)
+        draw.rectangle([x0, y0, x0 + 4, y1], fill=(18, 18, 22, 240))
+        for sy in range(y0 + 4, y1 - 3, 5):
+            draw.line([x0 + 1, sy, x0 + 3, sy], fill=(45, 48, 55, 255))
+
+        # 5. Clear Jewel Case plastic tray clips (corners)
+        draw.rectangle([x1 - 6, y0 + 1, x1 - 1, y0 + 4], fill=(200, 210, 225, 120))
+        draw.rectangle([x1 - 6, y1 - 4, x1 - 1, y1 - 1], fill=(200, 210, 225, 120))
+
+        # 6. Glass reflections and specular highlights
+        draw.line([x0 + 1, y0, x1 - 1, y0], fill=(255, 255, 255, 210))
+        draw.line([x0, y0 + 1, x0, y1 - 1], fill=(255, 255, 255, 190))
+        draw.line([x0 + 1, y1, x1 - 1, y1], fill=(15, 15, 20, 230))
+        draw.line([x1, y0 + 1, x1, y1 - 1], fill=(20, 22, 28, 200))
+
+        # Diagonal glass glare sheen
+        for i in range(16):
+            draw.point((x0 + 6 + i, y0 + 3 + i), fill=(255, 255, 255, 75))
+            draw.point((x0 + 7 + i, y0 + 3 + i), fill=(255, 255, 255, 95))
+            draw.point((x0 + 8 + i, y0 + 3 + i), fill=(255, 255, 255, 60))
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
