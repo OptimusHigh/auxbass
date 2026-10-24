@@ -139,10 +139,11 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "", cover_byt
     Build micro-pack zip in memory.
     Structure:
       pack.mcmeta: {"pack":{"pack_format":97,"description":"GanjaCraft Media"}}
+      pack.png: 64x64 album art or vinyl icon
       assets/ganjacraft/sounds/track_{id}.ogg
       assets/ganjacraft/sounds.json
       assets/minecraft/optifine/cit/music_disc_{id}.png (16x16 vinyl texture)
-      assets/minecraft/optifine/cit/music_disc_{id}.properties (CIT support)
+      assets/minecraft/optifine/cit/music_disc_{id}.properties (CIT support for OptiFine / Variants CIT)
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
@@ -167,17 +168,32 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "", cover_byt
         }
         z.writestr("assets/ganjacraft/sounds.json", json.dumps(sounds, ensure_ascii=False))
 
-        # Vinyl custom texture & CIT support (OptiFine / CIT Resewn)
+        # Vinyl custom texture & CIT support (OptiFine / CIT Resewn / Variants CIT)
         vinyl_png = generate_vinyl_texture(cover_bytes)
         if vinyl_png:
             z.writestr(f"assets/minecraft/optifine/cit/music_disc_{track_id}.png", vinyl_png)
             cit_props = (
                 f"type=item\n"
+                f"items=music_disc_13\n"
                 f"matchItems=minecraft:music_disc_13\n"
                 f"texture=music_disc_{track_id}.png\n"
                 f"nbt.ganjacraft_track_id={track_id}\n"
             )
             z.writestr(f"assets/minecraft/optifine/cit/music_disc_{track_id}.properties", cit_props)
+
+        # pack.png for the pack icon
+        if cover_bytes:
+            try:
+                from PIL import Image
+                cimg = Image.open(io.BytesIO(cover_bytes)).convert("RGBA")
+                cimg = cimg.resize((64, 64), Image.Resampling.LANCZOS)
+                buf_icon = io.BytesIO()
+                cimg.save(buf_icon, format="PNG")
+                z.writestr("pack.png", buf_icon.getvalue())
+            except Exception as e:
+                logger.debug(f"Failed to generate pack.png: {e}")
+        elif vinyl_png:
+            z.writestr("pack.png", vinyl_png)
 
     return buf.getvalue()
 
@@ -252,12 +268,71 @@ async def download_telegram_file(file_id: str, dest: Path) -> bool:
         return False
 
 
+async def download_telegram_file_bytes(file_id: str) -> Optional[bytes]:
+    """Download Telegram file into bytes using get_http_session."""
+    from api.routers.player import get_telegram_file_path
+    from api.utils.bot_helpers import get_http_session
+    from shared.config import get_settings as _gs
+    s = _gs()
+    file_path = await get_telegram_file_path(file_id)
+    if not file_path:
+        logger.warning(f"Could not get file_path for {file_id[:20]}...")
+        return None
+    base_url = s.telegram_api_url.rstrip("/")
+    url = f"{base_url}/file/bot{s.bot_token}/{file_path.lstrip('/')}"
+    try:
+        session = await get_http_session()
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                return await resp.read()
+            logger.warning(f"Telegram file download status={resp.status} for {file_id[:20]}")
+    except Exception as e:
+        logger.error(f"download_telegram_file_bytes error: {e}")
+    return None
+
+
+async def download_cover_bytes(cover_ref: Optional[str]) -> Optional[bytes]:
+    """Download album artwork from external URL, Telegram proxy route, or direct Telegram file_id."""
+    if not cover_ref:
+        return None
+    cover_ref = cover_ref.strip()
+
+    # 1. Telegram proxy route (/api/images/<file_id>)
+    if cover_ref.startswith("/api/images/"):
+        file_id = cover_ref.split("/api/images/")[-1].strip()
+        return await download_telegram_file_bytes(file_id)
+
+    # 2. External HTTP / HTTPS image URL (Deezer, Last.fm, YouTube CDN, etc.)
+    if cover_ref.startswith("http://") or cover_ref.startswith("https://"):
+        try:
+            import aiohttp
+            from api.utils.bot_helpers import get_http_session
+            from shared.config import get_proxy_url
+            session = await get_http_session()
+            proxy = get_proxy_url()
+            timeout = aiohttp.ClientTimeout(total=10, connect=5)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "image/*,*/*;q=0.8",
+            }
+            async with session.get(cover_ref, headers=headers, timeout=timeout, proxy=proxy) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+                logger.warning(f"External cover download status={resp.status} for {cover_ref[:60]}")
+        except Exception as e:
+            logger.warning(f"Failed to fetch external cover {cover_ref[:60]}: {e}")
+        return None
+
+    # 3. Direct Telegram file_id
+    return await download_telegram_file_bytes(cover_ref)
+
+
 async def ensure_pack_for_track(
     track_id: int, 
     file_id: str, 
     title: str = "", 
     duration: Optional[int] = None,
-    image_file_id: Optional[str] = None
+    cover_ref: Optional[str] = None
 ) -> Optional[tuple[bytes, str]]:
     """
     Ensure micro-pack zip exists for track_id. Returns (zip_bytes, sha1) or None.
@@ -282,7 +357,6 @@ async def ensure_pack_for_track(
     tmp_dir.mkdir(parents=True, exist_ok=True)
     src_path = tmp_dir / f"{track_id}_src"
     ogg_path = tmp_dir / f"{track_id}.ogg"
-    cover_path = tmp_dir / f"{track_id}_cover.jpg" if image_file_id else None
 
     try:
         ok = await download_telegram_file(file_id, src_path)
@@ -292,11 +366,9 @@ async def ensure_pack_for_track(
 
         # Download cover if available
         cover_bytes = None
-        if image_file_id and cover_path:
+        if cover_ref:
             try:
-                cov_ok = await download_telegram_file(image_file_id, cover_path)
-                if cov_ok and cover_path.exists():
-                    cover_bytes = cover_path.read_bytes()
+                cover_bytes = await download_cover_bytes(cover_ref)
             except Exception as e:
                 logger.debug(f"Failed to download cover for track {track_id}: {e}")
 

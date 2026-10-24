@@ -34,15 +34,13 @@ def verify_service_token(x_service_token: Optional[str] = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid service token")
 
 
-def _extract_image_file_id(tr) -> Optional[str]:
+def _extract_cover_ref(tr) -> Optional[str]:
     img_id = getattr(tr, "image_file_id", None)
     if img_id:
         return img_id
-    enr = getattr(tr, "enrichment", None)
+    enr = tr.__dict__.get("enrichment")
     if enr and getattr(enr, "cover_url", None):
-        curl = enr.cover_url
-        if curl.startswith("/api/images/"):
-            return curl.split("/api/images/")[-1]
+        return enr.cover_url
     return None
 
 
@@ -136,11 +134,11 @@ async def get_minecraft_playlist(
     user, pl = await ensure_user_and_system_playlist(telegram_id=telegram_id, db=db)
     await db.flush()
 
-    # Load tracks with Track
+    # Load tracks with Track and TrackEnrichment
     result = await db.execute(
         select(PlaylistTrack)
         .where(PlaylistTrack.playlist_id == pl.id)
-        .options(selectinload(PlaylistTrack.track))
+        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment))
         .order_by(PlaylistTrack.position)
     )
     pts = result.scalars().all()
@@ -158,7 +156,7 @@ async def get_minecraft_playlist(
                 res = await ensure_pack_for_track(
                     tr.id, tr.file_id, tr.title or "", 
                     duration=tr.duration, 
-                    image_file_id=_extract_image_file_id(tr)
+                    cover_ref=_extract_cover_ref(tr)
                 )
                 if res:
                     _, sha1 = res
@@ -197,8 +195,9 @@ async def get_pack_zip(
     No service token required - pack URL is public but unguessable via sha1; client caches by sha1.
     We still allow ganj4core to fetch without auth for simplicity (pack URL is per-track).
     """
-    # Check if track exists
-    track = await db.get(Track, track_id)
+    # Check if track exists with enrichment
+    stmt = select(Track).options(selectinload(Track.enrichment)).where(Track.id == track_id)
+    track = (await db.execute(stmt)).scalar_one_or_none()
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
     if not track.file_id or track.file_id.startswith("lazy:") or track.file_id.startswith("pending:"):
@@ -225,7 +224,7 @@ async def get_pack_zip(
         track_id, track.file_id, 
         title=track.title or "", 
         duration=track.duration, 
-        image_file_id=_extract_image_file_id(track)
+        cover_ref=_extract_cover_ref(track)
     )
     if not result:
         raise HTTPException(status_code=502, detail="Failed to build pack (download/transcode error)")
