@@ -403,7 +403,7 @@ async def ensure_pack_for_track(
         logger.exception(f"ensure_pack_for_track {track_id} failed: {e}")
         return None
     finally:
-        for p in (src_path, ogg_path, cover_path):
+        for p in (src_path, ogg_path):
             try:
                 if p and p.exists():
                     p.unlink()
