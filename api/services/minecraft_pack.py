@@ -34,8 +34,15 @@ _sha1_cache: dict[int, str] = {}
 
 
 def pack_uuid_for_track(track_id: int) -> uuid.UUID:
-    """Deterministic UUID for ClientboundResourcePackPushPacket id."""
-    return uuid.uuid5(uuid.NAMESPACE_DNS, f"ganjacraft_track_{track_id}")
+    """
+    Deterministic UUID matching Java's java.util.UUID.nameUUIDFromBytes.
+    Uses MD5 with version 3 and variant 2.
+    """
+    data = f"ganjacraft_track_{track_id}".encode("utf-8")
+    md5_bytes = bytearray(hashlib.md5(data).digest())
+    md5_bytes[6] = (md5_bytes[6] & 0x0f) | 0x30
+    md5_bytes[8] = (md5_bytes[8] & 0x3f) | 0x80
+    return uuid.UUID(bytes=bytes(md5_bytes))
 
 
 def pack_filename(track_id: int) -> Path:
@@ -106,13 +113,21 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "") -> bytes:
 async def transcode_to_ogg_mono(source_path: Path, out_path: Path) -> bool:
     """
     Transcode source audio to mono ogg vorbis for OpenAL attenuation.
-    Uses ffmpeg: -ac 1 -c:a libvorbis -q:a 4 (mono, quality 4)
+    Uses ffmpeg:
+      -vn: Strip any embedded video / album art (embedded APIC pictures create
+           a Theora video stream in .ogg that crashes Minecraft's audio engine!)
+      -map 0:a:0: Strictly select only the primary audio stream.
+      -map_metadata -1: Strip metadata tags that can corrupt Vorbis headers.
+      -ac 1: Mono audio for 3D positional playback.
+      -c:a libvorbis -q:a 4: Standard Vorbis quality.
     Returns True on success.
     """
-    # Ensure ffmpeg exists
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-y",
         "-i", str(source_path),
+        "-vn",
+        "-map", "0:a:0",
+        "-map_metadata", "-1",
         "-ac", "1",
         "-c:a", "libvorbis",
         "-q:a", "4",

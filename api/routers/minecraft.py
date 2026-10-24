@@ -139,9 +139,15 @@ async def get_minecraft_playlist(
         tr: Track = pt.track
         if not tr:
             continue
-        # Skip unavailable/chunk? Keep but mark
         puuid = str(pack_uuid_for_track(tr.id))
         sha1 = get_cached_sha1(tr.id)
+        if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
+            try:
+                res = await ensure_pack_for_track(tr.id, tr.file_id, tr.title or "")
+                if res:
+                    _, sha1 = res
+            except Exception as e:
+                logger.warning(f"Failed to pre-ensure pack for track {tr.id}: {e}")
         # Build pack URL: GET /api/minecraft/packs/{track_id}.zip
         pack_url = f"{base_url}/api/minecraft/packs/{tr.id}.zip"
         tracks.append(TrackManifestItem(
@@ -249,6 +255,14 @@ async def get_manifest_batch(
             tr = pt.track
             if not tr:
                 continue
+            sha1 = get_cached_sha1(tr.id)
+            if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
+                try:
+                    res = await ensure_pack_for_track(tr.id, tr.file_id, tr.title or "")
+                    if res:
+                        _, sha1 = res
+                except Exception as e:
+                    logger.warning(f"Failed to pre-ensure pack for track {tr.id}: {e}")
             tracks.append({
                 "track_id": tr.id,
                 "title": tr.title,
@@ -256,7 +270,7 @@ async def get_manifest_batch(
                 "duration": tr.duration,
                 "pack_uuid": str(pack_uuid_for_track(tr.id)),
                 "pack_url": f"{base_url}/api/minecraft/packs/{tr.id}.zip",
-                "sha1": get_cached_sha1(tr.id),
+                "sha1": sha1,
             })
         out.append({"telegram_id": tid, "playlist_id": pl.id, "tracks": tracks})
 
