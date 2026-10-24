@@ -20,6 +20,15 @@
           <span v-if="playlist.owner_name && !isOwner" class="owner-info" :class="{ 'clickable': !!playlist.owner_id }" @click="goToOwner">от {{ playlist.owner_name }}</span>
         </p>
         <div v-if="playlist.is_system" class="system-playlist-badge" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(29,185,84,0.15);border:1px solid rgba(29,185,84,0.3);font-size:12px;color:#1db954;">Minecraft Media - sistemnyy playlist</div>
+        <!-- MC track quota bar -->
+        <McQuotaBar
+          v-if="playlist.is_system && quota"
+          :current="quota.current"
+          :max="quota.max"
+          :rank="quota.rank"
+          :rank-display="quota.rank_display"
+          style="max-width: 320px;"
+        />
         <TagChips
           v-if="playlist.tags?.length"
           :tags="playlist.tags"
@@ -163,6 +172,7 @@ import TrackItem from '@/components/TrackItem.vue'
 import TagChips from '@/components/TagChips.vue'
 import EditPlaylistModal from '@/components/EditPlaylistModal.vue'
 import ExpandableSearch from '@/components/ui/ExpandableSearch.vue'
+import McQuotaBar from '@/components/McQuotaBar.vue'
 import api, { playlistsApi } from '@/api/client'
 import apiCache from '@/utils/apiCache'
 import { Music, Check, Plus, Globe, Play, Pause, Shuffle, Edit3, Share2, Search, Pin, AlertCircle } from 'lucide-vue-next'
@@ -206,6 +216,7 @@ const playlist = ref(null)
 const loading = ref(true)
 const searchQuery = ref('')
 const isSearchOpen = ref(false)
+const quota = ref(null)
 
 const goToGlobalSearch = () => {
   const q = searchQuery.value.trim()
@@ -283,10 +294,23 @@ const loadPlaylist = async (force = false) => {
       bypassCache: Boolean(force)
     })
     playlist.value = response.data
+    // Load quota for system playlists
+    if (response.data?.is_system && authStore.user?.id) {
+      loadQuota(authStore.user.id)
+    }
   } catch (error) {
     console.error('Failed to load playlist:', error)
   } finally {
     loading.value = false
+  }
+}
+
+const loadQuota = async (telegramId) => {
+  try {
+    const r = await api.get(`/minecraft/quota/${telegramId}`)
+    quota.value = r.data
+  } catch {
+    quota.value = null
   }
 }
 

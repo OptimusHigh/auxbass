@@ -38,6 +38,14 @@ class EnsureUserRequest(BaseModel):
     telegram_id: int
     username: Optional[str] = None
     first_name: Optional[str] = None
+    rank: Optional[str] = None          # e.g. "player", "veteran" — from ganj4core RankManager
+    max_tracks: Optional[int] = None    # from Rank.getMaxMusicTracks()
+
+
+class UpdateRankRequest(BaseModel):
+    telegram_id: int
+    rank: str
+    max_tracks: int
 
 
 class TrackManifestItem(BaseModel):
@@ -76,19 +84,29 @@ async def ensure_user(
     data: EnsureUserRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Idempotent: ensure User + system playlist exist. Returns playlist id."""
+    """Idempotent: ensure User + system playlist exist. Returns playlist id.
+    
+    Optionally updates mc_rank / mc_max_tracks if provided by ganj4core.
+    """
     user, pl = await ensure_user_and_system_playlist(
         telegram_id=data.telegram_id,
         username=data.username,
         first_name=data.first_name,
         db=db,
     )
+    # Sync rank if provided
+    if data.rank is not None:
+        user.mc_rank = data.rank
+    if data.max_tracks is not None:
+        user.mc_max_tracks = data.max_tracks
     await db.commit()
     return {
         "user_id": user.id,
         "playlist_id": pl.id,
         "playlist_name": pl.name,
         "is_system": True,
+        "mc_rank": user.mc_rank,
+        "mc_max_tracks": user.mc_max_tracks,
     }
 
 
@@ -244,3 +262,63 @@ async def get_manifest_batch(
 
     await db.commit()
     return {"playlists": out}
+
+
+@router.post("/update-rank", dependencies=[Depends(verify_service_token)])
+async def update_rank(
+    data: UpdateRankRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update mc_rank and mc_max_tracks for a user.
+
+    Called by ganj4core on rank purchase (purchaseRank / checkAutoPromoteNoob).
+    """
+    from sqlalchemy import update as sql_update
+    result = await db.execute(
+        sql_update(User)
+        .where(User.id == data.telegram_id)
+        .values(mc_rank=data.rank, mc_max_tracks=data.max_tracks)
+    )
+    await db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+    logger.info(f"[minecraft] updated rank for telegram_id={data.telegram_id} rank={data.rank} max_tracks={data.max_tracks}")
+    return {"status": "ok", "telegram_id": data.telegram_id, "rank": data.rank, "max_tracks": data.max_tracks}
+
+
+@router.get("/quota/{telegram_id}", dependencies=[Depends(verify_service_token)])
+async def get_quota(
+    telegram_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Return current track usage and limit for a user's system playlist.
+
+    Used by ganj4core and Vue frontend (via /api/minecraft/quota/{telegram_id}).
+    """
+    user = await db.get(User, telegram_id)
+    if not user:
+        return {"current": 0, "max": 5, "rank": "noob", "rank_display": "Новичок"}
+
+    # Get system playlist
+    pl_result = await db.execute(
+        select(Playlist).where(Playlist.owner_id == telegram_id, Playlist.is_system == True)  # noqa: E712
+    )
+    pl = pl_result.scalar_one_or_none()
+    current = 0
+    if pl:
+        count_result = await db.execute(
+            select(func.count()).where(PlaylistTrack.playlist_id == pl.id)
+        )
+        current = count_result.scalar() or 0
+
+    rank_display_map = {
+        "noob": "Новичок", "player": "Игрок", "veteran": "Ветеран",
+        "pro": "Про", "elite": "Элита", "legend": "Легенда",
+    }
+    rank = user.mc_rank or "noob"
+    return {
+        "current": current,
+        "max": user.mc_max_tracks or 5,
+        "rank": rank,
+        "rank_display": rank_display_map.get(rank, rank.capitalize()),
+    }

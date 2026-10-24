@@ -165,6 +165,8 @@ async def _ensure_sqlite_columns(conn):
             ("hide_profile", "INTEGER DEFAULT 0"),
             ("hide_telegram_id", "INTEGER DEFAULT 0"),
             ("notify_subscription", "INTEGER DEFAULT 1"),
+            ("mc_rank", "TEXT NOT NULL DEFAULT 'noob'"),
+            ("mc_max_tracks", "INTEGER NOT NULL DEFAULT 5"),
         ],
         "user_channels": [
             ("auto_sync", "INTEGER DEFAULT 1"),

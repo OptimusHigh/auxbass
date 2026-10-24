@@ -116,7 +116,11 @@ class User(Base):
     
     # Notification settings
     notify_subscription: Mapped[bool] = mapped_column(Boolean, default=True)  # Notify when subscription event occurs
-    
+
+    # Minecraft rank integration
+    mc_rank: Mapped[str] = mapped_column(String(20), nullable=False, default="noob", server_default="noob")
+    mc_max_tracks: Mapped[int] = mapped_column(Integer, nullable=False, default=5, server_default="5")
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

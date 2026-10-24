@@ -991,7 +991,30 @@ async def add_track_to_playlist(
     )
     if existing:
         raise HTTPException(status_code=400, detail="Track already in playlist")
-    
+
+    # --- Minecraft track limit guard ---
+    if getattr(playlist, "is_system", False):
+        owner = await db.get(User, playlist.owner_id)
+        max_tracks = getattr(owner, "mc_max_tracks", 5) if owner else 5
+        count_res = await db.execute(
+            select(func.count()).where(PlaylistTrack.playlist_id == playlist_id)
+        )
+        current_count = count_res.scalar() or 0
+        if current_count >= max_tracks:
+            rank_id = getattr(owner, "mc_rank", "noob") if owner else "noob"
+            rank_names = {
+                "noob": "Новичок", "player": "Игрок", "veteran": "Ветеран",
+                "pro": "Про", "elite": "Элита", "legend": "Легенда",
+            }
+            rank_name = rank_names.get(rank_id, rank_id.capitalize())
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Лимит треков для ранга «{rank_name}» ({max_tracks} шт.) исчерпан. "
+                    f"Повысьте ранг на сервере GanjaCraft!"
+                ),
+            )
+
     # Get next position
     max_pos = await db.scalar(
         select(func.coalesce(func.max(PlaylistTrack.position), 0))
