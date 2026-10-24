@@ -11,7 +11,7 @@ from datetime import datetime
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import select, func, delete, update, union_all, asc, desc, or_, String, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -773,6 +773,8 @@ async def update_playlist(
     if not playlist or playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
+    if getattr(playlist, "is_system", False) and data.name and data.name != playlist.name:
+        raise HTTPException(status_code=403, detail="Cannot rename system playlist")
     if data.name:
         playlist.name = data.name
     if data.description is not None:
@@ -914,6 +916,8 @@ async def delete_playlist_cover(
     playlist = await db.get(Playlist, playlist_id)
     if not playlist or playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
+    if getattr(playlist, "is_system", False):
+        raise HTTPException(status_code=403, detail="Cannot delete system playlist")
         
     if playlist.custom_cover_url and playlist.custom_cover_url.startswith("/api/covers/"):
         old_path = _safe_cover_path(playlist.custom_cover_url)
@@ -1002,7 +1006,37 @@ async def add_track_to_playlist(
     playlist.updated_at = utcnow()
     db.add(pt)
     await db.commit()
-    
+
+    # Background: pre-build micro-pack for system playlist so sha1 is ready for Minecraft
+    try:
+        is_system = bool(getattr(playlist, "is_system", False))
+    except Exception:
+        is_system = False
+    if is_system:
+        try:
+            from api.services.minecraft_pack import ensure_pack_for_track, get_cached_sha1
+            # Only trigger if not already cached
+            if not get_cached_sha1(track.id):
+                # Use BackgroundTasks if available via request context, else asyncio.create_task
+                # We create a fire-and-forget task
+                import asyncio
+                file_id = track.file_id
+                tid = track.id
+                title = track.title or ""
+                async def _build_pack_bg(tid=tid, file_id=file_id, title=title):
+                    try:
+                        await ensure_pack_for_track(tid, file_id, title=title)
+                    except Exception as e:
+                        logger.warning(f"[minecraft] background pack build failed tid={tid}: {e}")
+                try:
+                    asyncio.create_task(_build_pack_bg())
+                except RuntimeError:
+                    # No running loop (should not happen in async context)
+                    pass
+                logger.info(f"[minecraft] queued background pack build for track {tid} (system playlist {playlist_id})")
+        except Exception as e:
+            logger.warning(f"[minecraft] failed to queue pack build: {e}")
+
     return {"status": "added", "position": max_pos + 1}
 
 

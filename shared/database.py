@@ -173,6 +173,7 @@ async def _ensure_sqlite_columns(conn):
             ("custom_cover_url", "TEXT"),
             ("pending_cover_url", "TEXT"),
             ("pending_cover_expires_at", "TIMESTAMP"),
+            ("is_system", "INTEGER DEFAULT 0"),
         ],
         "user_library": [
             ("is_disliked", "INTEGER DEFAULT 0"),

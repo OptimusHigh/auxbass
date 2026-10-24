@@ -576,6 +576,7 @@ class Playlist(Base):
     """
     User-created playlist.
     Only for manual playlists, NOT for auto-albums or source collections.
+    is_system marks the auto-created "Minecraft Media" playlist (non-deletable/renamable).
     """
     __tablename__ = "playlists"
     
@@ -588,10 +589,16 @@ class Playlist(Base):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
     share_code: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
     custom_cover_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("idx_playlists_owner_system", "owner_id", "is_system"),
+        Index("idx_playlists_is_system", "is_system"),
+    )
     
     # Relationships
     owner: Mapped["User"] = relationship(back_populates="playlists")

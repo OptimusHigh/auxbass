@@ -338,6 +338,14 @@ async def ensure_user_in_db(user: TelegramUser):
             if changed:
                 await session.commit()
 
+        # Ensure system playlist exists for every user (Minecraft integration)
+        try:
+            from api.services.minecraft_playlist import get_or_create_system_playlist
+            await get_or_create_system_playlist(db_user.id, session)
+            await session.commit()
+        except Exception:
+            pass
+
         user.custom_nickname = db_user.custom_nickname
         user.custom_avatar_url = db_user.custom_avatar_url
         user.photo_url = getattr(db_user, 'photo_url', None) or user.photo_url
@@ -691,6 +699,13 @@ async def dev_login(data: Optional[DevLoginRequest] = None):
             session.add(db_user)
             await session.commit()
             await session.refresh(db_user)
+            # Ensure system playlist for dev user
+            try:
+                from api.services.minecraft_playlist import get_or_create_system_playlist as _get_sys_pl
+                await _get_sys_pl(db_user.id, session)
+                await session.commit()
+            except Exception:
+                pass
         
         user = TelegramUser(
             id=db_user.id,

@@ -812,6 +812,25 @@ onMounted(async () => {
         if (aid) {
           router.push(`/album/${aid}`)
         }
+      } else if (startParam === 'minecraft_media') {
+        // Minecraft deep-link: open system playlist (ensure it exists via auth ensure)
+        try {
+          const { default: api } = await import('@/utils/api.js')
+          // Fetch my playlists and find system one, or fallback to /api/minecraft/playlist/me via ensure
+          const resp = await api.get('/playlists')
+          const items = resp.data?.items || resp.data || []
+          const sys = items.find(pl => pl.is_system)
+          if (sys) {
+            router.push(`/playlist/${sys.id}`)
+          } else {
+            // Fallback: try to get system playlist via minecraft endpoint (requires auth, but we are authenticated)
+            // If not found, just go home where playlist will appear after ensure
+            router.push('/')
+          }
+        } catch (e) {
+          console.error('[DeepLink] minecraft_media failed:', e)
+          router.push('/')
+        }
       } else if (startParam.startsWith('track_')) {
         const tid = Number(startParam.replace('track_', ''))
         if (tid) {

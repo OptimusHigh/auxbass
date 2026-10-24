@@ -19,6 +19,7 @@
           <span v-if="playlist.is_public" class="public-badge"><Globe :size="14" /> Публичный</span>
           <span v-if="playlist.owner_name && !isOwner" class="owner-info" :class="{ 'clickable': !!playlist.owner_id }" @click="goToOwner">от {{ playlist.owner_name }}</span>
         </p>
+        <div v-if="playlist.is_system" class="system-playlist-badge" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(29,185,84,0.15);border:1px solid rgba(29,185,84,0.3);font-size:12px;color:#1db954;">Minecraft Media - sistemnyy playlist</div>
         <TagChips
           v-if="playlist.tags?.length"
           :tags="playlist.tags"
@@ -291,6 +292,7 @@ const loadPlaylist = async (force = false) => {
 
 // Edit modal handlers
 const openEditModal = () => {
+  if (playlist.value?.is_system) { uiStore.toast.error('Zaschischeno', 'Sistemnyy playlist nelzya pereimenovat'); return }
   showEditModal.value = true
 }
 
@@ -320,6 +322,7 @@ const handleTracksUpdate = (tracks) => {
 }
 
 const deletePlaylist = async () => {
+  if (playlist.value?.is_system) { uiStore.toast.error('Zaschischeno', 'Sistemnyy playlist Minecraft Media nelzya udalit'); return }
   try {
     await libraryStore.deletePlaylist(playlist.value.id)
     uiStore.toast.success('Удалено', 'Плейлист удален')

@@ -45,6 +45,7 @@ from api.utils.bot_helpers import close_bot as close_image_bot, close_http_sessi
 from api.routers.social import router as social_router
 from api.routers.tags import router as tags_router
 from api.routers.ingestion import router as ingestion_router
+from api.routers.minecraft import router as minecraft_router
 from api.services.version import get_version_info
 
 
@@ -248,6 +249,7 @@ app.include_router(social_router, prefix="/api/social", tags=["Social"])
 app.include_router(social_router, prefix="/api", tags=["Social-Legacy"])
 app.include_router(tags_router, prefix="/api/tracks", tags=["Tags"])
 app.include_router(ingestion_router)
+app.include_router(minecraft_router, prefix="/api/minecraft", tags=["Minecraft"])
 
 
 # ============== Static Files & SPA Fallback ==============

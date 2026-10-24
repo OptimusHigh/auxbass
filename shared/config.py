@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     proxy_url: str = ""  # e.g. "http://user:pass@host:port" or "socks5://host:port"
     ytdlp_timeout: int = 15  # Network socket timeout in seconds
     
+    # Minecraft integration (ganj4core -> tg_player service auth)
+    minecraft_service_token: str = ""
+    minecraft_pack_base_url: str = ""  # e.g. https://tg-player.example.com - used to build pack URLs; falls back to api_url
+
     # Scanner buffer chat ID (private group where bot forwards messages for scanning)
     # If set, scan_channel will forward to this chat instead of user's DM — no spam.
     # Create a private group, add the bot as admin, set the group's chat_id here.

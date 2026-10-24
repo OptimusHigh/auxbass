@@ -34,6 +34,7 @@ class PlaylistResponse(BaseModel):
     covers: List[str] = []  # Array of cover URLs for collage display
     tags: Optional[List[str]] = None  # Tags aggregated from playlist tracks
     is_public: bool = False
+    is_system: bool = False
     owner_id: Optional[int] = None
     owner_name: Optional[str] = None
     is_subscribed: bool = False  # Whether current user is subscribed
