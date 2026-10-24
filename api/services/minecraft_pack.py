@@ -434,17 +434,37 @@ async def ensure_pack_for_track(
             except Exception:
                 pass
 
-    # Need to build
+    # Permanent audio cache for transcoded mono ogg
+    audio_dir = PACKS_DIR / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    ogg_cache_path = audio_dir / f"{track_id}.ogg"
+
     tmp_dir = PACKS_DIR / "_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     src_path = tmp_dir / f"{track_id}_src"
-    ogg_path = tmp_dir / f"{track_id}.ogg"
 
     try:
-        ok = await download_telegram_file(file_id, src_path)
-        if not ok or not src_path.exists() or src_path.stat().st_size == 0:
-            logger.error(f"Failed to download source for track {track_id}")
-            return None
+        if ogg_cache_path.exists() and ogg_cache_path.stat().st_size > 0:
+            ogg_bytes = ogg_cache_path.read_bytes()
+        else:
+            ok = await download_telegram_file(file_id, src_path)
+            if not ok or not src_path.exists() or src_path.stat().st_size == 0:
+                logger.error(f"Failed to download source for track {track_id}")
+                return None
+
+            # Transcode strictly with concurrency 1 and low priority
+            is_long_mix = bool(duration and duration > 900)
+            tmp_ogg = tmp_dir / f"{track_id}.ogg"
+            async with _transcode_semaphore:
+                ok = await transcode_to_ogg_mono(src_path, tmp_ogg, is_long_mix=is_long_mix)
+
+            if not ok or not tmp_ogg.exists() or tmp_ogg.stat().st_size == 0:
+                logger.error(f"Transcode failed for track {track_id}")
+                return None
+
+            # Store in permanent audio cache
+            tmp_ogg.replace(ogg_cache_path)
+            ogg_bytes = ogg_cache_path.read_bytes()
 
         # Download cover if available
         cover_bytes = None
@@ -454,16 +474,6 @@ async def ensure_pack_for_track(
             except Exception as e:
                 logger.debug(f"Failed to download cover for track {track_id}: {e}")
 
-        # Transcode strictly with concurrency 1 and low priority
-        is_long_mix = bool(duration and duration > 900)
-        async with _transcode_semaphore:
-            ok = await transcode_to_ogg_mono(src_path, ogg_path, is_long_mix=is_long_mix)
-            
-        if not ok or not ogg_path.exists():
-            logger.error(f"Transcode failed for track {track_id}")
-            return None
-
-        ogg_bytes = ogg_path.read_bytes()
         if not ogg_bytes:
             logger.error(f"Empty ogg for track {track_id}")
             return None
@@ -485,7 +495,7 @@ async def ensure_pack_for_track(
         logger.exception(f"ensure_pack_for_track {track_id} failed: {e}")
         return None
     finally:
-        for p in (src_path, ogg_path):
+        for p in (src_path, tmp_dir / f"{track_id}.ogg"):
             try:
                 if p and p.exists():
                     p.unlink()
