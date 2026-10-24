@@ -150,6 +150,8 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "", cover_byt
         mcmeta = {
             "pack": {
                 "pack_format": PACK_FORMAT_MAJOR,
+                "min_format": 48,
+                "max_format": PACK_FORMAT_MAJOR,
                 "description": PACK_DESCRIPTION,
             }
         }
@@ -168,9 +170,31 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "", cover_byt
         }
         z.writestr("assets/ganjacraft/sounds.json", json.dumps(sounds, ensure_ascii=False))
 
-        # Vinyl custom texture & CIT support (OptiFine / CIT Resewn / Variants CIT)
+        # Vinyl custom texture & Native 26.3 Item Model + CIT fallback
         vinyl_png = generate_vinyl_texture(cover_bytes)
         if vinyl_png:
+            # 1. Native 26.3 Item Definition: assets/ganjacraft/items/disc_{track_id}.json
+            item_def = {
+                "model": {
+                    "type": "minecraft:model",
+                    "model": f"ganjacraft:item/disc_{track_id}"
+                }
+            }
+            z.writestr(f"assets/ganjacraft/items/disc_{track_id}.json", json.dumps(item_def, ensure_ascii=False))
+
+            # 2. Native 26.3 Item Model: assets/ganjacraft/models/item/disc_{track_id}.json
+            item_model = {
+                "parent": "minecraft:item/template_music_disc",
+                "textures": {
+                    "layer0": f"ganjacraft:item/disc_{track_id}"
+                }
+            }
+            z.writestr(f"assets/ganjacraft/models/item/disc_{track_id}.json", json.dumps(item_model, ensure_ascii=False))
+
+            # 3. Native 26.3 Texture: assets/ganjacraft/textures/item/disc_{track_id}.png
+            z.writestr(f"assets/ganjacraft/textures/item/disc_{track_id}.png", vinyl_png)
+
+            # 4. OptiFine CIT fallback
             z.writestr(f"assets/minecraft/optifine/cit/music_disc_{track_id}.png", vinyl_png)
             cit_props = (
                 f"type=item\n"
