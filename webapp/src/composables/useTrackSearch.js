@@ -36,6 +36,8 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
   // Current query and dedup set (cached for loadMore)
   let _currentQuery = ''
   let _libraryIds = new Set()
+  let _activeController = null
+  let _searchSequence = 0
 
   const hasMoreLibrary = computed(() => libraryResults.value.length < libraryTotal.value)
   const hasMoreFriends = computed(() => friendsResults.value.length < friendsTotal.value)
@@ -62,13 +64,30 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
   const search = async () => {
     const query = searchQuery.value.trim()
     if (!query) {
+      if (_activeController) {
+        _activeController.abort()
+        _activeController = null
+      }
+      _searchSequence++
       libraryResults.value = []
       friendsResults.value = []
       globalResults.value = []
+      libraryTotal.value = 0
       friendsTotal.value = 0
       globalTotal.value = 0
+      isSearching.value = false
+      isFriendsLoading.value = false
+      isGlobalLoading.value = false
       return
     }
+
+    // Cancel any previous in-flight search to prevent race conditions
+    if (_activeController) {
+      _activeController.abort()
+    }
+    _activeController = new AbortController()
+    const currentSignal = _activeController.signal
+    const currentSeq = ++_searchSequence
 
     _currentQuery = query
 
@@ -83,12 +102,15 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
     try {
       const [libraryRes, friendsRes, globalRes] = await Promise.all([
         api.get('/library', {
-          params: { search: query, per_page: perPage, page: 1 }
+          params: { search: query, per_page: perPage, page: 1 },
+          signal: currentSignal
         }).catch(error => {
+          if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return null
           console.error('Failed to search library:', error)
           return null
         }),
-        socialApi.searchFriends(query, perPage, 1).catch(error => {
+        socialApi.searchFriends(query, perPage, 1, { signal: currentSignal }).catch(error => {
+          if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return null
           console.error('Failed to search friends:', error)
           return null
         }),
@@ -96,11 +118,17 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
           search: query,
           per_page: perPage,
           page: 1
-        }).catch(error => {
+        }, { signal: currentSignal }).catch(error => {
+          if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return null
           console.error('Failed to search global:', error)
           return null
         })
       ])
+
+      // If a newer search was started or this search was aborted, ignore stale response
+      if (currentSeq !== _searchSequence || currentSignal.aborted || query !== searchQuery.value.trim()) {
+        return
+      }
 
       // 1) User's library
       const libItems = libraryRes?.data?.items || []
@@ -122,9 +150,11 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
         t => !_libraryIds.has(t.id) && !friendsIds.has(t.id)
       )
     } finally {
-      isSearching.value = false
-      isFriendsLoading.value = false
-      isGlobalLoading.value = false
+      if (currentSeq === _searchSequence) {
+        isSearching.value = false
+        isFriendsLoading.value = false
+        isGlobalLoading.value = false
+      }
     }
   }
 
@@ -196,6 +226,11 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
 
   const clearSearch = () => {
     if (searchTimeout) clearTimeout(searchTimeout)
+    if (_activeController) {
+      _activeController.abort()
+      _activeController = null
+    }
+    _searchSequence++
     searchQuery.value = ''
     libraryResults.value = []
     friendsResults.value = []
@@ -206,6 +241,9 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
     libraryPage.value = 1
     friendsPage.value = 1
     globalPage.value = 1
+    isSearching.value = false
+    isFriendsLoading.value = false
+    isGlobalLoading.value = false
     isLibraryLoadingMore.value = false
     _currentQuery = ''
     _libraryIds = new Set()
@@ -265,6 +303,10 @@ export function useTrackSearch({ perPage = 50, debounceDelay = 300 } = {}) {
 
   onUnmounted(() => {
     if (searchTimeout) clearTimeout(searchTimeout)
+    if (_activeController) {
+      _activeController.abort()
+      _activeController = null
+    }
   })
 
   return {

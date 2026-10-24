@@ -1,7 +1,7 @@
 import api from './core'
 
 export const socialApi = {
-  searchFriends: (search, perPage = 50, page = 1) => api.get('/social/friends/search', { params: { search, per_page: perPage, page } }),
+  searchFriends: (search, perPage = 50, page = 1, options = {}) => api.get('/social/friends/search', { params: { search, per_page: perPage, page }, ...options }),
   getFollowing: () => api.get('/social/following'),
   getFollowers: () => api.get('/social/followers'),
   searchUsers: (query, page = 1, perPage = 30) => api.get('/social/search', { params: { q: query, query, page, per_page: perPage } }),

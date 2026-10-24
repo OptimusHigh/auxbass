@@ -14,7 +14,7 @@ export const ingestionApi = {
   getJob: (jobId) => api.get(`/ingestion/jobs/${jobId}`, { bypassCache: true }),
   cancelJob: (jobId) => api.post(`/ingestion/jobs/${jobId}/cancel`),
   getRecent: () => api.get('/ingestion/recent', { bypassCache: true }),
-  search: (q, provider = 'soundcloud', limit = 30) => api.get('/ingestion/search', { params: { q, provider, limit } }),
+  search: (q, provider = 'soundcloud', limit = 30, options = {}) => api.get('/ingestion/search', { params: { q, provider, limit }, ...options }),
   quickImport: nonCacheable((data) => api.post('/ingestion/quick-import', data), 'track'),
   getSoundCloudAccount: () => api.get('/ingestion/account/soundcloud', { bypassCache: true }),
   connectSoundCloudAccount: nonCacheable((data) => api.post('/ingestion/account/soundcloud/connect', data), 'externalAccount'),

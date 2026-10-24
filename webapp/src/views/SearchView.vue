@@ -378,7 +378,7 @@ const {
   search: debouncedSearch, 
   clear: clearSearchInput, 
   setQuery 
-} = useDebouncedSearch()
+} = useDebouncedSearch(null, 350)
 
 const activeFilter = ref('all')
 
@@ -997,22 +997,40 @@ const handleSyncAllLikes = async () => {
   }
 }
 
+let scAbortController = null
+let scSearchSeq = 0
+
 const searchSoundCloud = async (query, limit = 30) => {
   const cleanQ = query.replace(/^#/, '').trim()
+  if (scAbortController) {
+    scAbortController.abort()
+  }
   if (!cleanQ || cleanQ.length < 2) {
+    scSearchSeq++
     soundcloudResults.value = []
+    isSoundCloudSearching.value = false
     return
   }
 
+  scAbortController = new AbortController()
+  const currentSignal = scAbortController.signal
+  const currentSeq = ++scSearchSeq
+
   isSoundCloudSearching.value = true
   try {
-    const res = await ingestionApi.search(cleanQ, 'soundcloud', limit)
+    const res = await ingestionApi.search(cleanQ, 'soundcloud', limit, { signal: currentSignal })
+    if (currentSeq !== scSearchSeq || currentSignal.aborted) return
     soundcloudResults.value = res.data || []
   } catch (e) {
+    if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return
     console.error('Failed to search SoundCloud:', e)
-    soundcloudResults.value = []
+    if (currentSeq === scSearchSeq) {
+      soundcloudResults.value = []
+    }
   } finally {
-    isSoundCloudSearching.value = false
+    if (currentSeq === scSearchSeq) {
+      isSoundCloudSearching.value = false
+    }
   }
 }
 
@@ -1191,22 +1209,40 @@ const handleSyncAllSpLikes = async () => {
   }
 }
 
+let spAbortController = null
+let spSearchSeq = 0
+
 const searchSpotify = async (query, limit = 30) => {
   const cleanQ = query.replace(/^#/, '').trim()
+  if (spAbortController) {
+    spAbortController.abort()
+  }
   if (!cleanQ || cleanQ.length < 2) {
+    spSearchSeq++
     spotifyResults.value = []
+    isSpotifySearching.value = false
     return
   }
 
+  spAbortController = new AbortController()
+  const currentSignal = spAbortController.signal
+  const currentSeq = ++spSearchSeq
+
   isSpotifySearching.value = true
   try {
-    const res = await ingestionApi.search(cleanQ, 'spotify', limit)
+    const res = await ingestionApi.search(cleanQ, 'spotify', limit, { signal: currentSignal })
+    if (currentSeq !== spSearchSeq || currentSignal.aborted) return
     spotifyResults.value = res.data || []
   } catch (e) {
+    if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return
     console.error('Failed to search Spotify:', e)
-    spotifyResults.value = []
+    if (currentSeq === spSearchSeq) {
+      spotifyResults.value = []
+    }
   } finally {
-    isSpotifySearching.value = false
+    if (currentSeq === spSearchSeq) {
+      isSpotifySearching.value = false
+    }
   }
 }
 
@@ -1268,22 +1304,40 @@ const youtubeResults = ref([])
 const isYouTubeSearching = ref(false)
 const isLoadingMoreYouTube = ref(false)
 
+let ytAbortController = null
+let ytSearchSeq = 0
+
 const searchYouTube = async (query, limit = 30) => {
   const cleanQ = query.replace(/^#/, '').trim()
+  if (ytAbortController) {
+    ytAbortController.abort()
+  }
   if (!cleanQ || cleanQ.length < 2) {
+    ytSearchSeq++
     youtubeResults.value = []
+    isYouTubeSearching.value = false
     return
   }
 
+  ytAbortController = new AbortController()
+  const currentSignal = ytAbortController.signal
+  const currentSeq = ++ytSearchSeq
+
   isYouTubeSearching.value = true
   try {
-    const res = await ingestionApi.search(cleanQ, 'youtube', limit)
+    const res = await ingestionApi.search(cleanQ, 'youtube', limit, { signal: currentSignal })
+    if (currentSeq !== ytSearchSeq || currentSignal.aborted) return
     youtubeResults.value = res.data || []
   } catch (e) {
+    if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return
     console.error('Failed to search YouTube:', e)
-    youtubeResults.value = []
+    if (currentSeq === ytSearchSeq) {
+      youtubeResults.value = []
+    }
   } finally {
-    isYouTubeSearching.value = false
+    if (currentSeq === ytSearchSeq) {
+      isYouTubeSearching.value = false
+    }
   }
 }
 
@@ -1559,14 +1613,28 @@ const goToAlbum = (albumId) => {
   router.push(`/album/${albumId}`)
 }
 
+let metaAbortController = null
+let metaSearchSeq = 0
+
 const searchArtistsAndPlaylists = async (query) => {
   const cleanQ = query.replace(/^#/, '').trim()
+  if (metaAbortController) {
+    metaAbortController.abort()
+  }
   if (!cleanQ) {
+    metaSearchSeq++
     artistsResults.value = []
     albumsResults.value = []
     playlistsResults.value = []
+    isArtistsSearching.value = false
+    isAlbumsSearching.value = false
+    isPlaylistsSearching.value = false
     return
   }
+
+  metaAbortController = new AbortController()
+  const currentSignal = metaAbortController.signal
+  const currentSeq = ++metaSearchSeq
 
   isArtistsSearching.value = true
   isAlbumsSearching.value = true
@@ -1574,17 +1642,18 @@ const searchArtistsAndPlaylists = async (query) => {
 
   try {
     const [artistsRes, albumsRes, myPlaylistsRes, globalPlaylistsRes] = await Promise.allSettled([
-      artistsApi.getGlobal({ search: cleanQ, limit: 30 }),
-      albumsApi.getGlobal({ search: cleanQ, limit: 30 }),
-      playlistsApi.getAll({ search: cleanQ, limit: 20 }),
-      playlistsApi.getGlobal({ search: cleanQ, limit: 20 })
+      artistsApi.getGlobal({ search: cleanQ, limit: 30 }, { signal: currentSignal }),
+      albumsApi.getGlobal({ search: cleanQ, limit: 30 }, { signal: currentSignal }),
+      playlistsApi.getAll({ search: cleanQ, limit: 20 }, { signal: currentSignal }),
+      playlistsApi.getGlobal({ search: cleanQ, limit: 20 }, { signal: currentSignal })
     ])
+
+    if (currentSeq !== metaSearchSeq || currentSignal.aborted) return
 
     // 1. Artists
     if (artistsRes.status === 'fulfilled') {
       artistsResults.value = artistsRes.value.data?.items || []
     } else {
-      console.error('Failed to search artists:', artistsRes.reason)
       const all = libraryStore.artists || []
       artistsResults.value = all.filter(a => (a.name || a.artist || '').toLowerCase().includes(cleanQ.toLowerCase()))
     }
@@ -1593,7 +1662,6 @@ const searchArtistsAndPlaylists = async (query) => {
     if (albumsRes.status === 'fulfilled') {
       albumsResults.value = albumsRes.value.data?.items || []
     } else {
-      console.error('Failed to search albums:', albumsRes.reason)
       albumsResults.value = []
     }
 
@@ -1616,9 +1684,11 @@ const searchArtistsAndPlaylists = async (query) => {
       playlistsResults.value = all.filter(p => (p.name || '').toLowerCase().includes(cleanQ.toLowerCase()))
     }
   } finally {
-    isArtistsSearching.value = false
-    isAlbumsSearching.value = false
-    isPlaylistsSearching.value = false
+    if (currentSeq === metaSearchSeq) {
+      isArtistsSearching.value = false
+      isAlbumsSearching.value = false
+      isPlaylistsSearching.value = false
+    }
   }
 }
 
@@ -1696,6 +1766,14 @@ watch(activeFilter, (newFilter) => {
 })
 
 const handleClear = () => {
+  if (metaAbortController) metaAbortController.abort()
+  if (scAbortController) scAbortController.abort()
+  if (spAbortController) spAbortController.abort()
+  if (ytAbortController) ytAbortController.abort()
+  metaSearchSeq++
+  scSearchSeq++
+  spSearchSeq++
+  ytSearchSeq++
   urlPreviewData.value = null
   urlResolveError.value = null
   urlImportJob.value = null
@@ -1957,6 +2035,10 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
+  if (metaAbortController) metaAbortController.abort()
+  if (scAbortController) scAbortController.abort()
+  if (spAbortController) spAbortController.abort()
+  if (ytAbortController) ytAbortController.abort()
   window.removeEventListener('reset-view-state', handleResetState)
 })
 </script>

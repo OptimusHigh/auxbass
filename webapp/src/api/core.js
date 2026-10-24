@@ -82,6 +82,11 @@ api.interceptors.response.use(
     return response
   },
   async (error) => {
+    // Ignore canceled requests (e.g. from AbortController on rapid search typing)
+    if (axios.isCancel(error) || error.code === 'ERR_CANCELED') {
+      return Promise.reject(error)
+    }
+
     const config = error.config
     
     // Notify network monitor of failed request

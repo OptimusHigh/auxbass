@@ -2,8 +2,8 @@ import api, { cacheable, nonCacheable } from './core'
 
 export const playlistsApi = {
   getAll: cacheable((params = {}, options = {}) => api.get('/playlists', { params, ...options })),
-  getGlobal: cacheable((params = {}) => api.get('/playlists/global', { params })),
-  getManageAll: cacheable(() => api.get('/playlists/manage/all')),
+  getGlobal: cacheable((params = {}, options = {}) => api.get('/playlists/global', { params, ...options })),
+  getManageAll: cacheable((options = {}) => api.get('/playlists/manage/all', options)),
   getOne: cacheable((id, params = {}, options = {}) => api.get(`/playlists/${id}`, { params, ...options })),
   // Bypass cache when shuffle is requested to get fresh random order
   // Add timestamp to ensure truly random results on every call
