@@ -610,7 +610,7 @@ class TrackService:
             if not track:
                 return None
 
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as temp_dir:
                 if custom_url:
                     prov = provider_registry.find_provider(custom_url)
                     if not prov:

@@ -539,7 +539,7 @@ class IngestionPipeline:
                         continue
 
                     # B. Download audio to temporary directory
-                    with tempfile.TemporaryDirectory() as temp_dir:
+                    with tempfile.TemporaryDirectory(dir=tempfile.gettempdir()) as temp_dir:
                         if job_manager.download_semaphore.locked():
                             job.current_step = "Ожидание очереди загрузки..."
                         else:

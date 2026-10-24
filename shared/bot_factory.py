@@ -26,7 +26,8 @@ def create_bot(
         if settings.telegram_api_url and not settings.telegram_api_url.startswith("https://api.telegram.org"):
             from aiogram.client.telegram import TelegramAPIServer
             server = TelegramAPIServer.from_base(settings.telegram_api_url.rstrip("/"), is_local=True)
-            session = AiohttpSession(api=server, proxy=proxy)
+            # Local Bot API server is on local network; do not route through external proxy
+            session = AiohttpSession(api=server)
         elif proxy:
             session = AiohttpSession(proxy=proxy)
 

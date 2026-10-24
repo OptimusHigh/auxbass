@@ -11,6 +11,15 @@ os.environ.setdefault("MULTIDICT_NO_EXTENSIONS", "1")
 os.environ.setdefault("FROZENLIST_NO_EXTENSIONS", "1")
 os.environ.setdefault("AIOHTTP_NO_EXTENSIONS", "1")
 
+import tempfile
+# Ensure temporary files use container disk storage instead of 100M RAM tmpfs
+_custom_tmp = os.environ.get("TMPDIR") or ("/home/container/tmp" if os.path.exists("/home/container") else os.path.abspath("data/tmp"))
+os.makedirs(_custom_tmp, exist_ok=True)
+os.environ["TMPDIR"] = _custom_tmp
+os.environ["TEMP"] = _custom_tmp
+os.environ["TMP"] = _custom_tmp
+tempfile.tempdir = _custom_tmp
+
 import asyncio
 import logging
 import signal

@@ -24,9 +24,17 @@ if [ -f ".env" ]; then
         export HTTPS_PROXY="$PROXY_VAL"
         export http_proxy="$PROXY_VAL"
         export https_proxy="$PROXY_VAL"
+        export NO_PROXY="localhost,127.0.0.1,192.168.0.0/16,172.16.0.0/12,10.0.0.0/8,882e5ebb-62ad-4b74-9724-e490d1f030b6"
+        export no_proxy="$NO_PROXY"
         echo "🌐 Using Proxy from .env: ${PROXY_VAL##*@}"
     fi
 fi
+
+# Ensure temp directory uses container persistent storage (avoids 100MB tmpfs limit)
+mkdir -p /home/container/tmp
+export TMPDIR=/home/container/tmp
+export TEMP=/home/container/tmp
+export TMP=/home/container/tmp
 
 
 # Allow git operations in Docker container directory
