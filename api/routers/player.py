@@ -971,8 +971,8 @@ async def get_batch_stream_urls(
             # (they may be actively importing or propagating to Telegram CDN)
             now = utcnow()
             created = track.created_at
-            if created and created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
+            if created and created.tzinfo is not None:
+                created = created.replace(tzinfo=None)
             is_recent = bool(created and (now - created).total_seconds() < 600)
             
             if not is_recent:

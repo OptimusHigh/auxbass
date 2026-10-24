@@ -233,7 +233,7 @@ async def download_telegram_file(file_id: str, dest: Path) -> bool:
     base_url = s.telegram_api_url.rstrip("/")
     # file_path already includes e.g. "documents/file_123.ogg" - need full URL
     # Telegram file URL: {api_url}/file/bot{token}/{file_path}
-    url = f"{base_url}/file/bot{s.bot_token}/{file_path}"
+    url = f"{base_url}/file/bot{s.bot_token}/{file_path.lstrip('/')}"
     # Use shared http session if available
     try:
         from api.utils.bot_helpers import get_http_session

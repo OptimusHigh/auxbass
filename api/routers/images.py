@@ -161,12 +161,14 @@ async def get_image(file_id: str):
         
         # Construct download URL
         base_url = settings.telegram_api_url.rstrip("/")
-        url = f"{base_url}/file/bot{settings.bot_token}/{file_path}"
+        file_clean = file_path.lstrip("/")
+        url = f"{base_url}/file/bot{settings.bot_token}/{file_clean}"
             
         # Download and serve using shared pooled session
         session = await get_http_session()
         async with session.get(url) as resp:
             if resp.status != 200:
+                logger.warning(f"Failed to fetch Telegram image {file_id[:20]} status={resp.status} url={url}")
                 raise HTTPException(status_code=404, detail="Image not found")
             
             content = await resp.read()

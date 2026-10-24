@@ -34,6 +34,18 @@ def verify_service_token(x_service_token: Optional[str] = Header(default=None)):
         raise HTTPException(status_code=401, detail="Invalid service token")
 
 
+def _extract_image_file_id(tr) -> Optional[str]:
+    img_id = getattr(tr, "image_file_id", None)
+    if img_id:
+        return img_id
+    enr = getattr(tr, "enrichment", None)
+    if enr and getattr(enr, "cover_url", None):
+        curl = enr.cover_url
+        if curl.startswith("/api/images/"):
+            return curl.split("/api/images/")[-1]
+    return None
+
+
 class EnsureUserRequest(BaseModel):
     telegram_id: int
     username: Optional[str] = None
@@ -146,7 +158,7 @@ async def get_minecraft_playlist(
                 res = await ensure_pack_for_track(
                     tr.id, tr.file_id, tr.title or "", 
                     duration=tr.duration, 
-                    image_file_id=tr.image_file_id
+                    image_file_id=_extract_image_file_id(tr)
                 )
                 if res:
                     _, sha1 = res
@@ -213,7 +225,7 @@ async def get_pack_zip(
         track_id, track.file_id, 
         title=track.title or "", 
         duration=track.duration, 
-        image_file_id=track.image_file_id
+        image_file_id=_extract_image_file_id(track)
     )
     if not result:
         raise HTTPException(status_code=502, detail="Failed to build pack (download/transcode error)")
@@ -270,7 +282,7 @@ async def get_manifest_batch(
                     res = await ensure_pack_for_track(
                         tr.id, tr.file_id, tr.title or "", 
                         duration=tr.duration, 
-                        image_file_id=tr.image_file_id
+                        image_file_id=_extract_image_file_id(tr)
                     )
                     if res:
                         _, sha1 = res
