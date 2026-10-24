@@ -72,18 +72,80 @@ def _compute_sha1(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()
 
 
-def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "") -> bytes:
+# Global transcode semaphore to protect CPU from starvation
+_transcode_semaphore = asyncio.Semaphore(1)
+
+
+def generate_vinyl_texture(cover_bytes: Optional[bytes] = None) -> bytes:
+    """Generate authentic 16x16 Minecraft vinyl disc texture with pixelated cover."""
+    try:
+        from PIL import Image, ImageDraw
+        img = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Draw vinyl grooved body
+        for y in range(16):
+            for x in range(16):
+                dx = x - 7.5
+                dy = y - 7.5
+                dist = (dx * dx + dy * dy) ** 0.5
+                if 1.2 <= dist <= 6.8:
+                    val = 24 if int(dist * 2.2) % 2 == 0 else 38
+                    draw.point((x, y), fill=(val, val, val, 255))
+
+        # Outer edge rim
+        rim_points = [
+            (5,1),(6,1),(7,1),(8,1),(9,1),(10,1),
+            (3,2),(4,2),(11,2),(12,2),
+            (2,3),(13,3),(2,4),(13,4),
+            (1,5),(14,5),(1,6),(14,6),(1,7),(14,7),(1,8),(14,8),(1,9),(14,9),(1,10),(14,10),
+            (2,11),(13,11),(2,12),(13,12),
+            (3,13),(4,13),(11,13),(12,13),
+            (5,14),(6,14),(7,14),(8,14),(9,14),(10,14)
+        ]
+        for p in rim_points:
+            draw.point(p, fill=(18, 18, 18, 255))
+
+        # Draw label if cover provided
+        if cover_bytes:
+            try:
+                cimg = Image.open(io.BytesIO(cover_bytes)).convert("RGBA")
+                cimg = cimg.resize((6, 6), Image.Resampling.LANCZOS)
+                for cy in range(6):
+                    for cx in range(6):
+                        dx = cx - 2.5
+                        dy = cy - 2.5
+                        if dx * dx + dy * dy <= 6.5:
+                            px = cimg.getpixel((cx, cy))
+                            img.putpixel((cx + 5, cy + 5), px)
+            except Exception as e:
+                logger.debug(f"Cover label overlay failed: {e}")
+
+        # Spindle hole (center)
+        for sx in (7, 8):
+            for sy in (7, 8):
+                img.putpixel((sx, sy), (0, 0, 0, 0))
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"generate_vinyl_texture failed: {e}")
+        return b""
+
+
+def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "", cover_bytes: Optional[bytes] = None) -> bytes:
     """
     Build micro-pack zip in memory.
     Structure:
       pack.mcmeta: {"pack":{"pack_format":97,"description":"GanjaCraft Media"}}
       assets/ganjacraft/sounds/track_{id}.ogg
-      assets/ganjacraft/sounds.json: {"track_{id}":{"sounds":[{"name":"ganjacraft:track_{id}","stream":true}],"subtitle":"GanjaCraft Media"}}
-    Note: sounds.json key WITHOUT namespace per spec.
+      assets/ganjacraft/sounds.json
+      assets/minecraft/optifine/cit/music_disc_{id}.png (16x16 vinyl texture)
+      assets/minecraft/optifine/cit/music_disc_{id}.properties (CIT support)
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        # pack.mcmeta - 26.3 uses int pack_format (97), not object
         mcmeta = {
             "pack": {
                 "pack_format": PACK_FORMAT_MAJOR,
@@ -92,13 +154,11 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "") -> bytes:
         }
         z.writestr("pack.mcmeta", json.dumps(mcmeta, ensure_ascii=False))
 
-        # pack.png is optional - skip to keep micro-pack minimal
-
         # ogg file
         ogg_path = f"assets/ganjacraft/sounds/track_{track_id}.ogg"
         z.writestr(ogg_path, ogg_bytes)
 
-        # sounds.json - key without namespace
+        # sounds.json - key without namespace per spec
         sounds = {
             f"track_{track_id}": {
                 "sounds": [{"name": f"ganjacraft:track_{track_id}", "stream": True}],
@@ -107,31 +167,49 @@ def _build_zip_bytes(track_id: int, ogg_bytes: bytes, title: str = "") -> bytes:
         }
         z.writestr("assets/ganjacraft/sounds.json", json.dumps(sounds, ensure_ascii=False))
 
+        # Vinyl custom texture & CIT support (OptiFine / CIT Resewn)
+        vinyl_png = generate_vinyl_texture(cover_bytes)
+        if vinyl_png:
+            z.writestr(f"assets/minecraft/optifine/cit/music_disc_{track_id}.png", vinyl_png)
+            cit_props = (
+                f"type=item\n"
+                f"matchItems=minecraft:music_disc_13\n"
+                f"texture=music_disc_{track_id}.png\n"
+                f"nbt.ganjacraft_track_id={track_id}\n"
+            )
+            z.writestr(f"assets/minecraft/optifine/cit/music_disc_{track_id}.properties", cit_props)
+
     return buf.getvalue()
 
 
-async def transcode_to_ogg_mono(source_path: Path, out_path: Path) -> bool:
+async def transcode_to_ogg_mono(source_path: Path, out_path: Path, is_long_mix: bool = False) -> bool:
     """
     Transcode source audio to mono ogg vorbis for OpenAL attenuation.
-    Uses ffmpeg:
-      -vn: Strip any embedded video / album art (embedded APIC pictures create
-           a Theora video stream in .ogg that crashes Minecraft's audio engine!)
-      -map 0:a:0: Strictly select only the primary audio stream.
-      -map_metadata -1: Strip metadata tags that can corrupt Vorbis headers.
-      -ac 1: Mono audio for 3D positional playback.
-      -c:a libvorbis -q:a 4: Standard Vorbis quality.
-    Returns True on success.
+    Throttled to max 2 threads and low priority (nice -n 19 on Linux) to prevent MC lag.
     """
-    proc = await asyncio.create_subprocess_exec(
+    quality_args = ["-b:a", "64k"] if is_long_mix else ["-q:a", "4"]
+    
+    import shutil
+    has_nice = shutil.which("nice") is not None
+    cmd = []
+    if has_nice:
+        cmd.extend(["nice", "-n", "19"])
+
+    cmd.extend([
         "ffmpeg", "-y",
+        "-threads", "2",
         "-i", str(source_path),
         "-vn",
         "-map", "0:a:0",
         "-map_metadata", "-1",
         "-ac", "1",
         "-c:a", "libvorbis",
-        "-q:a", "4",
+        *quality_args,
         str(out_path),
+    ])
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -174,12 +252,16 @@ async def download_telegram_file(file_id: str, dest: Path) -> bool:
         return False
 
 
-async def ensure_pack_for_track(track_id: int, file_id: str, title: str = "") -> Optional[tuple[bytes, str]]:
+async def ensure_pack_for_track(
+    track_id: int, 
+    file_id: str, 
+    title: str = "", 
+    duration: Optional[int] = None,
+    image_file_id: Optional[str] = None
+) -> Optional[tuple[bytes, str]]:
     """
     Ensure micro-pack zip exists for track_id. Returns (zip_bytes, sha1) or None.
     Caches on disk: data/minecraft_packs/{id}.zip + .sha1
-    If zip exists and sha1 cached, returns immediately.
-    Otherwise downloads source, transcodes to mono ogg, builds zip.
     """
     zpath = pack_filename(track_id)
     if zpath.exists():
@@ -187,7 +269,6 @@ async def ensure_pack_for_track(track_id: int, file_id: str, title: str = "") ->
         if sha1:
             try:
                 data = zpath.read_bytes()
-                # Verify sha1 matches file (in case of corruption)
                 actual = _compute_sha1(data)
                 if actual == sha1:
                     return data, sha1
@@ -201,6 +282,7 @@ async def ensure_pack_for_track(track_id: int, file_id: str, title: str = "") ->
     tmp_dir.mkdir(parents=True, exist_ok=True)
     src_path = tmp_dir / f"{track_id}_src"
     ogg_path = tmp_dir / f"{track_id}.ogg"
+    cover_path = tmp_dir / f"{track_id}_cover.jpg" if image_file_id else None
 
     try:
         ok = await download_telegram_file(file_id, src_path)
@@ -208,8 +290,21 @@ async def ensure_pack_for_track(track_id: int, file_id: str, title: str = "") ->
             logger.error(f"Failed to download source for track {track_id}")
             return None
 
-        # If source is already ogg mono, we could skip transcode, but always transcode to ensure mono
-        ok = await transcode_to_ogg_mono(src_path, ogg_path)
+        # Download cover if available
+        cover_bytes = None
+        if image_file_id and cover_path:
+            try:
+                cov_ok = await download_telegram_file(image_file_id, cover_path)
+                if cov_ok and cover_path.exists():
+                    cover_bytes = cover_path.read_bytes()
+            except Exception as e:
+                logger.debug(f"Failed to download cover for track {track_id}: {e}")
+
+        # Transcode strictly with concurrency 1 and low priority
+        is_long_mix = bool(duration and duration > 900)
+        async with _transcode_semaphore:
+            ok = await transcode_to_ogg_mono(src_path, ogg_path, is_long_mix=is_long_mix)
+            
         if not ok or not ogg_path.exists():
             logger.error(f"Transcode failed for track {track_id}")
             return None
@@ -219,7 +314,7 @@ async def ensure_pack_for_track(track_id: int, file_id: str, title: str = "") ->
             logger.error(f"Empty ogg for track {track_id}")
             return None
 
-        zip_bytes = _build_zip_bytes(track_id, ogg_bytes, title)
+        zip_bytes = _build_zip_bytes(track_id, ogg_bytes, title, cover_bytes=cover_bytes)
         sha1 = _compute_sha1(zip_bytes)
 
         # Atomic write
@@ -236,9 +331,9 @@ async def ensure_pack_for_track(track_id: int, file_id: str, title: str = "") ->
         logger.exception(f"ensure_pack_for_track {track_id} failed: {e}")
         return None
     finally:
-        for p in (src_path, ogg_path):
+        for p in (src_path, ogg_path, cover_path):
             try:
-                if p.exists():
+                if p and p.exists():
                     p.unlink()
             except Exception:
                 pass

@@ -84,7 +84,7 @@ const HD_MIME_TYPES = [
   'audio/x-m4a', 'audio/mp4',
   'audio/alac', 'audio/x-alac'
 ]
-const MAX_STREAMABLE_SIZE = 20 * 1024 * 1024
+const MAX_STREAMABLE_SIZE = 2000 * 1024 * 1024
 
 export const isTrackNotStreamable = (track) => {
   if (!track) return false

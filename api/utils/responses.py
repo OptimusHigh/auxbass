@@ -35,14 +35,21 @@ HD_MIME_TYPES = {
     "audio/x-aiff",    # AIFF (alternative)
 }
 
-MAX_STREAMABLE_SIZE_BYTES = 20 * 1024 * 1024
+def get_max_streamable_size() -> int:
+    from shared.config import get_settings
+    s = get_settings()
+    if s.telegram_api_url and not s.telegram_api_url.startswith("https://api.telegram.org"):
+        return 2000 * 1024 * 1024
+    return 20 * 1024 * 1024
+
+MAX_STREAMABLE_SIZE_BYTES = 2000 * 1024 * 1024
 
 
 # ============== Streaming Format Helpers ==============
 
 def is_streamable(mime_type: Optional[str], file_size: Optional[int] = None) -> bool:
     """Check if MIME type and file size are supported for direct streaming in web browser."""
-    if file_size is not None and file_size > MAX_STREAMABLE_SIZE_BYTES:
+    if file_size is not None and file_size > get_max_streamable_size():
         return False
     if not mime_type:
         return True  # Assume streamable if mime_type unknown (legacy tracks)

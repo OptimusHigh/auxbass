@@ -188,6 +188,10 @@ export async function saveTrackToCache(track, blob, mimeType = 'audio/mpeg') {
     console.warn(`[AudioCache] Skipping save for preview chunk track ${track.id} ("${track.title}")`)
     return false
   }
+  // Don't clutter IndexedDB with huge files > 50MB (stream them directly instead)
+  if (blob.size > 50 * 1024 * 1024) {
+    return false
+  }
 
   try {
     const db = await openCacheDb()

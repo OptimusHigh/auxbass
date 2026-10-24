@@ -22,8 +22,13 @@ def create_bot(
     bot_token = token or settings.bot_token
     proxy = get_proxy_url()
 
-    if session is None and proxy:
-        session = AiohttpSession(proxy=proxy)
+    if session is None:
+        if settings.telegram_api_url and not settings.telegram_api_url.startswith("https://api.telegram.org"):
+            from aiogram.client.telegram import TelegramAPIServer
+            server = TelegramAPIServer.from_base(settings.telegram_api_url.rstrip("/"), is_local=True)
+            session = AiohttpSession(api=server, proxy=proxy)
+        elif proxy:
+            session = AiohttpSession(proxy=proxy)
 
     return Bot(
         token=bot_token,

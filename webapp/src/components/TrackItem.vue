@@ -59,12 +59,11 @@
       </div>
     </div>
     
-    <!-- Large file or HD: show size + download button instead of duration -->
-    <template v-if="isLargeFile && !track.is_unavailable">
+    <!-- Lossless HD without MP3 streamable copy: show download button -->
+    <template v-if="isHdFormat && !track.streamable_id && !track.is_unavailable">
       <span 
-        v-if="isHdFormat" 
         class="hd-badge-mini" 
-        :title="track.streamable_id ? 'Высокое качество (FLAC/WAV) - будет воспроизведена MP3 версия' : 'Высокое качество (FLAC/WAV) - только скачивание'"
+        title="Lossless (FLAC/WAV) - только скачивание"
       >
         HD
       </span>
@@ -80,9 +79,10 @@
       </button>
     </template>
     
-    <!-- Normal tracks: show duration -->
-    <div v-else class="track-duration">
-      {{ formatDuration(track.duration) }}
+    <!-- Streamable tracks (including large mixes & files): show duration with subtle mix icon -->
+    <div v-else class="track-duration" :class="{ 'is-mix': isMix }">
+      <Disc3 v-if="isMix" :size="12" class="mix-icon" title="Микс" />
+      <span>{{ formatDuration(track.duration) }}</span>
     </div>
     
     <button 
@@ -119,7 +119,12 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatDuration, getTrackCoverStyle, getTrackInitials, getDisplayTitle, getDisplayArtist, getCoverUrl, CoverSize, triggerHaptic, suppressNextClick, suppressNextContextMenu } from '@/utils'
-import { X, Check, ThumbsDown } from 'lucide-vue-next'
+import { X, Check, ThumbsDown, Disc3 } from 'lucide-vue-next'
+
+const isMix = computed(() => {
+  const d = props.track?.duration
+  return Boolean(d && d >= 900)
+})
 
 const router = useRouter()
 const imageError = ref(false)
@@ -507,6 +512,14 @@ const handleTagClick = (tag) => {
   color: var(--c-text-3);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mix-icon {
+  color: var(--c-accent);
+  opacity: 0.85;
 }
 
 /* ─── HD Badge (for FLAC/WAV files) ─── */

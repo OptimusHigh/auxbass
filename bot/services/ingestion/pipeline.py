@@ -560,9 +560,10 @@ class IngestionPipeline:
                                 track_meta, temp_dir, progress_hook=on_download_progress
                             )
 
-                        # Check Telegram 50MB limit
-                        if downloaded.file_size > 50 * 1024 * 1024:
-                            logger.warning(f"[Ingestion] File {downloaded.audio_path} exceeds 50MB ({downloaded.file_size} bytes). Skipping.")
+                        # Check Telegram file limit (2GB for local bot api, 50MB for cloud)
+                        max_upload_size = 2000 * 1024 * 1024 if (settings.telegram_api_url and not settings.telegram_api_url.startswith("https://api.telegram.org")) else 50 * 1024 * 1024
+                        if downloaded.file_size > max_upload_size:
+                            logger.warning(f"[Ingestion] File {downloaded.audio_path} exceeds {max_upload_size // (1024*1024)}MB ({downloaded.file_size} bytes). Skipping.")
                             job.failed_tracks += 1
                             job.processed_tracks += 1
                             job.download_percent = None

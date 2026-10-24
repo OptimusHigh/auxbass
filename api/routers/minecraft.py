@@ -143,7 +143,11 @@ async def get_minecraft_playlist(
         sha1 = get_cached_sha1(tr.id)
         if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
             try:
-                res = await ensure_pack_for_track(tr.id, tr.file_id, tr.title or "")
+                res = await ensure_pack_for_track(
+                    tr.id, tr.file_id, tr.title or "", 
+                    duration=tr.duration, 
+                    image_file_id=tr.image_file_id
+                )
                 if res:
                     _, sha1 = res
             except Exception as e:
@@ -205,7 +209,12 @@ async def get_pack_zip(
         )
 
     # Build on-demand (may take a few seconds: download + ffmpeg)
-    result = await ensure_pack_for_track(track_id, track.file_id, title=track.title or "")
+    result = await ensure_pack_for_track(
+        track_id, track.file_id, 
+        title=track.title or "", 
+        duration=track.duration, 
+        image_file_id=track.image_file_id
+    )
     if not result:
         raise HTTPException(status_code=502, detail="Failed to build pack (download/transcode error)")
 
@@ -258,7 +267,11 @@ async def get_manifest_batch(
             sha1 = get_cached_sha1(tr.id)
             if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
                 try:
-                    res = await ensure_pack_for_track(tr.id, tr.file_id, tr.title or "")
+                    res = await ensure_pack_for_track(
+                        tr.id, tr.file_id, tr.title or "", 
+                        duration=tr.duration, 
+                        image_file_id=tr.image_file_id
+                    )
                     if res:
                         _, sha1 = res
                 except Exception as e:
