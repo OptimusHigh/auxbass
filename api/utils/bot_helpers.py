@@ -73,7 +73,7 @@ async def get_http_session() -> aiohttp.ClientSession:
         _http_session = aiohttp.ClientSession(
             connector=connector,
             timeout=timeout,
-            trust_env=True,
+            trust_env=False,
         )
     return _http_session
 
