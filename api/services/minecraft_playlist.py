@@ -13,6 +13,65 @@ logger = logging.getLogger(__name__)
 SYSTEM_PLAYLIST_NAME = "🎮 Minecraft Media"
 SYSTEM_PLAYLIST_DESCRIPTION = "Треки для проигрывателя в Minecraft. Добавь сюда музыку — она появится в игре."
 
+SERVER_MAIN_PLAYLIST_NAME = "📻 GanjaCraft Main"
+SERVER_MAIN_PLAYLIST_DESCRIPTION = "Официальный серверный плейлист GanjaCraft. Доступен всем игрокам на сервере."
+
+
+async def get_or_create_server_main_playlist(db: AsyncSession) -> Playlist:
+    """Get or create the global Minecraft Server Main playlist.
+    
+    This playlist holds server-wide music discs available to all players in /music.
+    Only administrators can add/remove tracks.
+    """
+    from shared.config import get_settings
+    settings = get_settings()
+    admin_id = settings.admin_ids[0] if settings.admin_ids else 874295897
+
+    result = await db.execute(
+        select(Playlist).where(
+            Playlist.system_type == "minecraft_main",
+        ).order_by(Playlist.id.asc())
+    )
+    playlists = result.scalars().all()
+    if playlists:
+        primary = playlists[0]
+        # Ensure correct flags
+        if not primary.is_system or not primary.is_public:
+            primary.is_system = True
+            primary.is_public = True
+            await db.commit()
+        if len(playlists) > 1:
+            for extra in playlists[1:]:
+                logger.warning(f"Cleaning duplicate server main playlist {extra.id}")
+                await db.delete(extra)
+            await db.commit()
+        return primary
+
+    # Ensure admin user exists
+    admin_user = await db.get(User, admin_id)
+    if not admin_user:
+        admin_user = User(id=admin_id, first_name="Server Admin")
+        db.add(admin_user)
+        await db.flush()
+
+    pl = Playlist(
+        owner_id=admin_id,
+        name=SERVER_MAIN_PLAYLIST_NAME,
+        description=SERVER_MAIN_PLAYLIST_DESCRIPTION,
+        is_public=True,
+        is_system=True,
+        system_type="minecraft_main",
+    )
+    db.add(pl)
+    try:
+        await db.flush()
+        await db.refresh(pl)
+        await db.commit()
+        logger.info(f"Created Minecraft Server Main playlist {pl.id} (owner={admin_id})")
+    except Exception as e:
+        logger.error(f"Failed to create Server Main playlist: {e}")
+    return pl
+
 
 async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playlist:
     """Get or create the Minecraft system playlist for a user. Idempotent and concurrency-safe."""

@@ -142,6 +142,78 @@ async def ensure_user(
     }
 
 
+RANK_MAX_DURATION = {
+    "noob": 420,       # 7 мин
+    "player": 600,     # 10 мин
+    "veteran": 900,    # 15 мин
+    "pro": 1800,       # 30 мин
+    "elite": 7200,     # 120 мин (2ч)
+    "legend": 7200,    # 120 мин (2ч)
+}
+
+RANK_DISPLAY_MAP = {
+    "noob": "Новичок",
+    "player": "Игрок",
+    "veteran": "Ветеран",
+    "pro": "Про",
+    "elite": "Элита",
+    "legend": "Легенда",
+}
+
+
+@router.get("/server-playlist", dependencies=[Depends(verify_service_token)])
+async def get_server_main_playlist_manifest(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get manifest for the global Server Main playlist (tracks available to everyone).
+    """
+    from api.services.minecraft_playlist import get_or_create_server_main_playlist
+    server_pl = await get_or_create_server_main_playlist(db)
+
+    server_pts = (await db.execute(
+        select(PlaylistTrack)
+        .where(PlaylistTrack.playlist_id == server_pl.id)
+        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment))
+        .order_by(PlaylistTrack.position)
+    )).scalars().all()
+
+    base_url = _pack_base_url(request)
+    tracks: List[TrackManifestItem] = []
+    for pt in server_pts:
+        tr = pt.track
+        if not tr:
+            continue
+        puuid = str(pack_uuid_for_track(tr.id))
+        sha1 = get_cached_sha1(tr.id)
+        if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
+            import asyncio
+            asyncio.create_task(ensure_pack_for_track(
+                tr.id, tr.file_id, tr.title or "",
+                duration=tr.duration,
+                cover_ref=_extract_cover_ref(tr),
+            ))
+        pack_url = f"{base_url}/api/minecraft/packs/{tr.id}.zip"
+        tracks.append(TrackManifestItem(
+            track_id=tr.id,
+            title=tr.title or f"Track {tr.id}",
+            artist=tr.artist,
+            duration=tr.duration,
+            file_id=tr.file_id,
+            pack_uuid=puuid,
+            pack_url=pack_url,
+            sha1=sha1,
+        ))
+
+    return PlaylistManifestResponse(
+        playlist_id=server_pl.id,
+        playlist_name=server_pl.name,
+        is_system=True,
+        tracks=tracks,
+    )
+
+
 @router.get("/playlist/{telegram_id}", dependencies=[Depends(verify_service_token)])
 async def get_minecraft_playlist(
     telegram_id: int,
@@ -149,28 +221,45 @@ async def get_minecraft_playlist(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get system playlist manifest for a Telegram user.
-    Auto-creates User + system playlist if not exists (so ganj4core gets empty playlist for new players).
+    Get combined playlist manifest for a Telegram user:
+    1. Server Main Playlist tracks (available to all players).
+    2. Player's personal Minecraft playlist tracks.
+    Auto-creates User + personal system playlist if not exists.
     """
-    # Auto-create if missing
+    from api.services.minecraft_playlist import get_or_create_server_main_playlist
+    # Ensure server main playlist exists
+    server_pl = await get_or_create_server_main_playlist(db)
+
+    # Ensure user & personal playlist exist
     user, pl = await ensure_user_and_system_playlist(telegram_id=telegram_id, db=db)
     await db.flush()
 
-    # Load tracks with Track and TrackEnrichment
-    result = await db.execute(
+    # Load server tracks
+    server_pts = (await db.execute(
+        select(PlaylistTrack)
+        .where(PlaylistTrack.playlist_id == server_pl.id)
+        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment))
+        .order_by(PlaylistTrack.position)
+    )).scalars().all()
+
+    # Load personal tracks
+    user_pts = (await db.execute(
         select(PlaylistTrack)
         .where(PlaylistTrack.playlist_id == pl.id)
         .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment))
         .order_by(PlaylistTrack.position)
-    )
-    pts = result.scalars().all()
+    )).scalars().all()
 
     base_url = _pack_base_url(request)
     tracks: List[TrackManifestItem] = []
-    for pt in pts:
+    seen_track_ids = set()
+
+    # Combine: Server main tracks first, then user's personal tracks (deduplicated)
+    for pt in list(server_pts) + list(user_pts):
         tr: Track = pt.track
-        if not tr:
+        if not tr or tr.id in seen_track_ids:
             continue
+        seen_track_ids.add(tr.id)
         puuid = str(pack_uuid_for_track(tr.id))
         sha1 = get_cached_sha1(tr.id)
         if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
@@ -205,7 +294,8 @@ async def get_minecraft_playlist(
 
 def _minecraft_tracks_stmt():
     """
-    Returns query for all tracks currently added to any player's Minecraft disc playlist (system_type='minecraft').
+    Returns query for all tracks currently added to any player's Minecraft disc playlist (system_type='minecraft')
+    or the global server main playlist (system_type='minecraft_main').
     Filters out lazy/pending placeholders and unavailable tracks.
     """
     from sqlalchemy import or_
@@ -215,7 +305,7 @@ def _minecraft_tracks_stmt():
         .join(Playlist, Playlist.id == PlaylistTrack.playlist_id)
         .where(
             or_(
-                Playlist.system_type == "minecraft",
+                Playlist.system_type.in_(["minecraft", "minecraft_main"]),
                 (Playlist.is_system == True) & (Playlist.name.like("%Minecraft%")),  # noqa: E712
             )
         )
@@ -560,11 +650,14 @@ async def get_quota(
         "pro": "Про", "elite": "Элита", "legend": "Легенда",
     }
     rank = user.mc_rank or "noob"
+    max_duration = RANK_MAX_DURATION.get(rank, 420)
     return {
         "current": current,
         "max": user.mc_max_tracks or 5,
         "rank": rank,
-        "rank_display": rank_display_map.get(rank, rank.capitalize()),
+        "rank_display": RANK_DISPLAY_MAP.get(rank, rank.capitalize()),
+        "max_duration": max_duration,
+        "max_duration_display": f"{max_duration // 60} мин.",
     }
 
 
@@ -585,22 +678,33 @@ async def forward_track_to_minecraft_playlist(
     # Ensure user & system playlist exist
     user, pl = await ensure_user_and_system_playlist(telegram_id=data.telegram_id, db=db)
 
-    # Check quota
+    # Check quota & rank
+    rank_id = getattr(user, "mc_rank", "noob") or "noob"
+    rank_name = RANK_DISPLAY_MAP.get(rank_id, rank_id.capitalize())
+
     count_res = await db.execute(
         select(func.count()).where(PlaylistTrack.playlist_id == pl.id)
     )
     current_count = count_res.scalar() or 0
     max_tracks = getattr(user, "mc_max_tracks", 5) or 5
     if current_count >= max_tracks:
-        rank_id = getattr(user, "mc_rank", "noob") or "noob"
-        rank_names = {
-            "noob": "Новичок", "player": "Игрок", "veteran": "Ветеран",
-            "pro": "Про", "elite": "Элита", "legend": "Легенда",
-        }
-        rank_name = rank_names.get(rank_id, rank_id.capitalize())
         raise HTTPException(
             status_code=403,
             detail=f"Лимит пластинок ранга «{rank_name}» исчерпан ({max_tracks} шт.). Повышение: /ranks",
+        )
+
+    # Check duration limit
+    max_duration = RANK_MAX_DURATION.get(rank_id, 420)
+    if data.duration and data.duration > max_duration:
+        cur_min = data.duration // 60
+        cur_sec = data.duration % 60
+        limit_min = max_duration // 60
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Длительность трека ({cur_min}:{cur_sec:02d}) превышает лимит для ранга «{rank_name}» ({limit_min} мин.). "
+                f"Длинные треки и DJ-сеты доступны на повышенных рангах: /ranks"
+            ),
         )
 
     # Save track via standard track_service pipeline

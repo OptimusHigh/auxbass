@@ -14,33 +14,20 @@
       </div>
       <div class="hero-info">
         <h1 class="hero-title">{{ playlist.name }}</h1>
-        <p class="hero-meta">
+        <p class="hero-meta" v-if="!playlist.is_system">
           <span>{{ playlist.track_count }} треков</span>
           <span v-if="playlist.is_public" class="public-badge"><Globe :size="14" /> Публичный</span>
           <span v-if="playlist.owner_name && !isOwner" class="owner-info" :class="{ 'clickable': !!playlist.owner_id }" @click="goToOwner">от {{ playlist.owner_name }}</span>
         </p>
-        <div v-if="playlist.is_system" style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <span class="system-playlist-badge" style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(29,185,84,0.15);border:1px solid rgba(29,185,84,0.3);font-size:12px;color:#1db954;">
-            🎮 Minecraft Media
-          </span>
-          <button 
-            type="button"
-            class="guide-trigger-btn"
-            style="display:inline-flex;align-items:center;gap:5px;padding:4px 12px;border-radius:999px;background:var(--c-bg-2, #1A1A1A);border:1px solid rgba(255,255,255,0.06);color:var(--c-text-2, #B0B0B0);font-size:12px;cursor:pointer;transition:all 0.15s ease;"
-            @click="openMinecraftGuide"
-          >
-            <HelpCircle :size="13" style="color:var(--c-accent, #1db954);" />
-            <span>Как это работает?</span>
-          </button>
-        </div>
         <!-- MC track quota bar -->
         <McQuotaBar
-          v-if="playlist.is_system && quota"
-          :current="quota.current"
-          :max="quota.max"
-          :rank="quota.rank"
-          :rank-display="quota.rank_display"
-          style="max-width: 320px;"
+          v-if="playlist.is_system"
+          :current="quota?.current ?? (playlist.track_count || 0)"
+          :max="quota?.max ?? 15"
+          :rank="quota?.rank ?? 'player'"
+          :rank-display="quota?.rank_display ?? 'Игрок'"
+          :max-duration-display="quota?.max_duration_display ?? '10 мин.'"
+          @open-guide="openMinecraftGuide"
         />
         <TagChips
           v-if="playlist.tags?.length"

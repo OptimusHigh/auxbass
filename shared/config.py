@@ -78,10 +78,37 @@ class Settings(BaseSettings):
     # Create a private group, add the bot as admin, set the group's chat_id here.
     scanner_buffer_chat_id: int = 0
     
+    # Admin Telegram IDs (for managing server playlists & system operations)
+    admin_ids: list[int] = [874295897]
+
+    @field_validator("admin_ids", mode="before")
+    @classmethod
+    def clean_admin_ids(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    return [int(x) for x in json.loads(v)]
+                except Exception:
+                    pass
+            return [int(x.strip()) for x in v.split(",") if x.strip().isdigit()]
+        elif isinstance(v, (list, set, tuple)):
+            return [int(x) for x in v]
+        return [874295897]
+
     class Config:
         env_file = (".env", ".env.local")
         env_file_encoding = "utf-8"
         extra = "ignore"
+
+
+def is_admin(user_id: int) -> bool:
+    """Check if telegram user_id has admin privileges."""
+    try:
+        return int(user_id) in get_settings().admin_ids
+    except Exception:
+        return False
 
 
 def detect_system_proxy() -> str:

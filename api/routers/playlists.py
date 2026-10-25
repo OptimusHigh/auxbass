@@ -22,7 +22,7 @@ from shared.models import (
     Playlist, PlaylistTrack, Track, UserLibrary, AlbumTrack, User,
     PlaylistSubscription, TrackEnrichment, UserChannel, TrackTag, utcnow
 )
-from shared.config import get_settings
+from shared.config import get_settings, is_admin
 from shared.images import crop_image_to_square
 from api.utils.bot_helpers import get_bot as _get_bot
 
@@ -366,10 +366,14 @@ async def get_all_my_playlists(
     db: AsyncSession = Depends(get_db),
 ):
     """Get ALL user's playlists including private ones (for management/settings)"""
-    # Count all owned playlists
+    # Count all owned playlists (and server main playlist if admin)
+    filter_stmt = (Playlist.owner_id == user.id)
+    if is_admin(user.id):
+        filter_stmt = or_(Playlist.owner_id == user.id, Playlist.system_type == "minecraft_main")
+
     total = await db.scalar(
         select(func.count(Playlist.id))
-        .where(Playlist.owner_id == user.id)
+        .where(filter_stmt)
     ) or 0
     
     # Get all playlists
@@ -377,7 +381,7 @@ async def get_all_my_playlists(
     result = await db.execute(
         select(Playlist, User)
         .join(User, User.id == Playlist.owner_id)
-        .where(Playlist.owner_id == user.id)
+        .where(filter_stmt)
         .order_by(Playlist.created_at.desc())
         .offset(offset)
         .limit(per_page)
@@ -774,8 +778,14 @@ async def update_playlist(
 ):
     """Update playlist name, description, visibility, and custom cover."""
     playlist = await db.get(Playlist, playlist_id)
-    
-    if not playlist or playlist.owner_id != user.id:
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    is_server_main = (getattr(playlist, "system_type", None) == "minecraft_main")
+    if is_server_main:
+        if not is_admin(user.id):
+            raise HTTPException(status_code=403, detail="Только администратор может изменять главный серверный плейлист")
+    elif playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     if getattr(playlist, "is_system", False) and data.name and data.name != playlist.name:
@@ -823,7 +833,14 @@ async def upload_playlist_cover(
 ):
     """Upload custom cover image for a playlist directly to Telegram storage (channel or PM)."""
     playlist = await db.get(Playlist, playlist_id)
-    if not playlist or playlist.owner_id != user.id:
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    is_server_main = (getattr(playlist, "system_type", None) == "minecraft_main")
+    if is_server_main:
+        if not is_admin(user.id):
+            raise HTTPException(status_code=403, detail="Только администратор может изменять главный серверный плейлист")
+    elif playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     content_type = file.content_type or ""
@@ -953,8 +970,13 @@ async def delete_playlist(
 ):
     """Delete playlist."""
     playlist = await db.get(Playlist, playlist_id)
-    
-    if not playlist or playlist.owner_id != user.id:
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    if getattr(playlist, "system_type", None) in ("minecraft", "minecraft_main") or getattr(playlist, "is_system", False):
+        raise HTTPException(status_code=403, detail="Нельзя удалить системный плейлист")
+
+    if playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     # Delete track associations first
@@ -977,8 +999,14 @@ async def add_track_to_playlist(
 ):
     """Add track to playlist."""
     playlist = await db.get(Playlist, playlist_id)
-    
-    if not playlist or playlist.owner_id != user.id:
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    is_server_main = (getattr(playlist, "system_type", None) == "minecraft_main")
+    if is_server_main:
+        if not is_admin(user.id):
+            raise HTTPException(status_code=403, detail="Только администратор может изменять главный серверный плейлист")
+    elif playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     # Check track exists - allow both library tracks and global tracks
@@ -997,26 +1025,41 @@ async def add_track_to_playlist(
     if existing:
         raise HTTPException(status_code=400, detail="Track already in playlist")
 
-    # --- Minecraft track limit guard ---
-    if getattr(playlist, "is_system", False):
+    # --- Minecraft track & duration limit guard (for personal player playlists) ---
+    if getattr(playlist, "system_type", None) == "minecraft" or (getattr(playlist, "is_system", False) and not is_server_main):
         owner = await db.get(User, playlist.owner_id)
         max_tracks = getattr(owner, "mc_max_tracks", 5) if owner else 5
         count_res = await db.execute(
             select(func.count()).where(PlaylistTrack.playlist_id == playlist_id)
         )
         current_count = count_res.scalar() or 0
+        rank_id = getattr(owner, "mc_rank", "noob") if owner else "noob"
+        rank_names = {
+            "noob": "Новичок", "player": "Игрок", "veteran": "Ветеран",
+            "pro": "Про", "elite": "Элита", "legend": "Легенда",
+        }
+        rank_name = rank_names.get(rank_id, rank_id.capitalize())
         if current_count >= max_tracks:
-            rank_id = getattr(owner, "mc_rank", "noob") if owner else "noob"
-            rank_names = {
-                "noob": "Новичок", "player": "Игрок", "veteran": "Ветеран",
-                "pro": "Про", "elite": "Элита", "legend": "Легенда",
-            }
-            rank_name = rank_names.get(rank_id, rank_id.capitalize())
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    f"Лимит треков для ранга «{rank_name}» ({max_tracks} шт.) исчерпан. "
-                    f"Повысьте ранг на сервере GanjaCraft!"
+                    f"Лимит пластинок для ранга «{rank_name}» ({max_tracks} шт.) исчерпан. "
+                    f"Повысьте ранг на сервере GanjaCraft: /ranks"
+                ),
+            )
+
+        # Duration limit check
+        from api.routers.minecraft import RANK_MAX_DURATION
+        max_duration = RANK_MAX_DURATION.get(rank_id, 420)
+        if track.duration and track.duration > max_duration:
+            cur_min = track.duration // 60
+            cur_sec = track.duration % 60
+            limit_min = max_duration // 60
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Длительность трека ({cur_min}:{cur_sec:02d}) превышает лимит для ранга «{rank_name}» ({limit_min} мин.). "
+                    f"Длинные треки и DJ-сеты доступны на повышенных рангах: /ranks"
                 ),
             )
 
@@ -1035,18 +1078,16 @@ async def add_track_to_playlist(
     db.add(pt)
     await db.commit()
 
-    # Background: pre-build micro-pack for system playlist so sha1 is ready for Minecraft
+    # Background: pre-build micro-pack for system/minecraft playlists so sha1 is ready for Minecraft
     try:
-        is_system = bool(getattr(playlist, "is_system", False))
+        is_mc = bool(getattr(playlist, "is_system", False) or getattr(playlist, "system_type", None) in ("minecraft", "minecraft_main"))
     except Exception:
-        is_system = False
-    if is_system:
+        is_mc = False
+    if is_mc:
         try:
             from api.services.minecraft_pack import ensure_pack_for_track, get_cached_sha1
             # Only trigger if not already cached
             if not get_cached_sha1(track.id):
-                # Use BackgroundTasks if available via request context, else asyncio.create_task
-                # We create a fire-and-forget task
                 import asyncio
                 file_id = track.file_id
                 tid = track.id
@@ -1059,9 +1100,8 @@ async def add_track_to_playlist(
                 try:
                     asyncio.create_task(_build_pack_bg())
                 except RuntimeError:
-                    # No running loop (should not happen in async context)
                     pass
-                logger.info(f"[minecraft] queued background pack build for track {tid} (system playlist {playlist_id})")
+                logger.info(f"[minecraft] queued background pack build for track {tid} (playlist {playlist_id})")
         except Exception as e:
             logger.warning(f"[minecraft] failed to queue pack build: {e}")
 
@@ -1077,8 +1117,14 @@ async def remove_track_from_playlist(
 ):
     """Remove track from playlist."""
     playlist = await db.get(Playlist, playlist_id)
-    
-    if not playlist or playlist.owner_id != user.id:
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    is_server_main = (getattr(playlist, "system_type", None) == "minecraft_main")
+    if is_server_main:
+        if not is_admin(user.id):
+            raise HTTPException(status_code=403, detail="Только администратор может изменять главный серверный плейлист")
+    elif playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     pt = await db.scalar(
@@ -1108,8 +1154,14 @@ async def reorder_playlist(
 ):
     """Reorder tracks in playlist."""
     playlist = await db.get(Playlist, playlist_id)
-    
-    if not playlist or playlist.owner_id != user.id:
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist not found")
+
+    is_server_main = (getattr(playlist, "system_type", None) == "minecraft_main")
+    if is_server_main:
+        if not is_admin(user.id):
+            raise HTTPException(status_code=403, detail="Только администратор может изменять главный серверный плейлист")
+    elif playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     # Update positions
