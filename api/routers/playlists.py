@@ -1017,7 +1017,12 @@ async def add_track_to_playlist(
         raise HTTPException(status_code=404, detail="Playlist not found")
     
     # Check track exists - allow both library tracks and global tracks
-    track = await db.get(Track, data.track_id)
+    # Check track exists - allow both library tracks and global tracks
+    track = await db.scalar(
+        select(Track)
+        .options(selectinload(Track.enrichment))
+        .where(Track.id == data.track_id)
+    )
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
     
@@ -1092,23 +1097,26 @@ async def add_track_to_playlist(
         is_mc = False
     if is_mc:
         try:
-            from api.services.minecraft_pack import ensure_pack_for_track, get_cached_sha1
-            # Only trigger if not already cached
-            if not get_cached_sha1(track.id):
+            from api.services.minecraft_pack import ensure_pack_for_track, get_cached_sha1, has_pack_cover
+            cover_ref = getattr(track.enrichment, "cover_url", None) if getattr(track, "enrichment", None) else None
+            needs_build = (not get_cached_sha1(track.id)) or (cover_ref and not has_pack_cover(track.id))
+            if needs_build:
                 import asyncio
                 file_id = track.file_id
                 tid = track.id
                 title = track.title or ""
-                async def _build_pack_bg(tid=tid, file_id=file_id, title=title):
+                dur = track.duration
+                cref = cover_ref
+                async def _build_pack_bg(tid=tid, file_id=file_id, title=title, dur=dur, cref=cref):
                     try:
-                        await ensure_pack_for_track(tid, file_id, title=title)
+                        await ensure_pack_for_track(tid, file_id, title=title, duration=dur, cover_ref=cref)
                     except Exception as e:
                         logger.warning(f"[minecraft] background pack build failed tid={tid}: {e}")
                 try:
                     asyncio.create_task(_build_pack_bg())
                 except RuntimeError:
                     pass
-                logger.info(f"[minecraft] queued background pack build for track {tid} (playlist {playlist_id})")
+                logger.info(f"[minecraft] queued background pack build for track {tid} (playlist {playlist_id}) cover={'yes' if cref else 'no'}")
         except Exception as e:
             logger.warning(f"[minecraft] failed to queue pack build: {e}")
 

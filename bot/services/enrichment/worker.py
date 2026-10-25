@@ -268,6 +268,13 @@ class EnrichmentWorker:
                     await self._on_enrichment_complete(track_id, result)
                 except Exception as e:
                     logger.error(f"Enrichment callback error: {e}")
+
+            # Invalidate any cached minecraft pack so it can rebuild with the new artwork
+            try:
+                from api.services.minecraft_pack import invalidate_pack
+                invalidate_pack(track_id)
+            except Exception:
+                pass
                     
         except Exception as e:
             logger.error(f"Failed to enrich track {track_id}: {e}")

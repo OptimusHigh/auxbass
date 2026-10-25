@@ -54,6 +54,14 @@ def sha1_path(track_id: int) -> Path:
     return PACKS_DIR / f"{track_id}.sha1"
 
 
+def cover_marker_path(track_id: int) -> Path:
+    return PACKS_DIR / f"{track_id}.cover"
+
+
+def has_pack_cover(track_id: int) -> bool:
+    return cover_marker_path(track_id).exists()
+
+
 def get_cached_sha1(track_id: int) -> Optional[str]:
     if track_id in _sha1_cache:
         return _sha1_cache[track_id]
@@ -477,21 +485,41 @@ async def ensure_pack_for_track(
 ) -> Optional[tuple[bytes, str]]:
     """
     Ensure micro-pack zip exists for track_id. Returns (zip_bytes, sha1) or None.
-    Caches on disk: data/minecraft_packs/{id}.zip + .sha1
+    Caches on disk: data/minecraft_packs/{id}.zip + .sha1 + .cover
     """
+    # 1. Auto-resolve cover_ref from DB if not provided by caller
+    if not cover_ref:
+        try:
+            from shared.database import async_session
+            from shared.models import TrackEnrichment
+            from sqlalchemy import select
+            async with async_session() as db:
+                enr = (await db.execute(select(TrackEnrichment).where(TrackEnrichment.track_id == track_id))).scalar_one_or_none()
+                if enr and enr.cover_url:
+                    cover_ref = enr.cover_url
+        except Exception:
+            pass
+
     zpath = pack_filename(track_id)
+    cover_marker = cover_marker_path(track_id)
+
+    # 2. Check disk cache
     if zpath.exists():
         sha1 = get_cached_sha1(track_id)
         if sha1:
-            try:
-                data = zpath.read_bytes()
-                actual = _compute_sha1(data)
-                if actual == sha1:
-                    return data, sha1
-                else:
-                    logger.warning(f"sha1 mismatch for track {track_id}, rebuilding")
-            except Exception:
-                pass
+            # If cover is now available but existing pack was built without cover: rebuild to apply cover!
+            if cover_ref and not cover_marker.exists():
+                logger.info(f"[MinecraftPack] Track {track_id} now has cover ({cover_ref[:40]}...), rebuilding micro-pack to apply artwork")
+            else:
+                try:
+                    data = zpath.read_bytes()
+                    actual = _compute_sha1(data)
+                    if actual == sha1:
+                        return data, sha1
+                    else:
+                        logger.warning(f"sha1 mismatch for track {track_id}, rebuilding")
+                except Exception:
+                    pass
 
     # Permanent audio cache for transcoded mono ogg
     audio_dir = PACKS_DIR / "audio"
@@ -547,7 +575,20 @@ async def ensure_pack_for_track(
         sha1_path(track_id).write_text(sha1, encoding="utf-8")
         _sha1_cache[track_id] = sha1
 
-        logger.info(f"Built micro-pack for track {track_id}: {len(zip_bytes)} bytes sha1={sha1[:8]}...")
+        # Track cover presence with marker file
+        if cover_bytes:
+            try:
+                cover_marker.touch()
+            except Exception:
+                pass
+        else:
+            try:
+                if cover_marker.exists():
+                    cover_marker.unlink()
+            except Exception:
+                pass
+
+        logger.info(f"Built micro-pack for track {track_id}: {len(zip_bytes)} bytes sha1={sha1[:8]}... (cover={'yes' if cover_bytes else 'no'})")
         return zip_bytes, sha1
 
     except Exception as e:
@@ -563,9 +604,9 @@ async def ensure_pack_for_track(
 
 
 def invalidate_pack(track_id: int):
-    """Remove cached pack (e.g. if track file_id changed)."""
+    """Remove cached pack (e.g. if track file_id or cover changed)."""
     _sha1_cache.pop(track_id, None)
-    for p in (pack_filename(track_id), sha1_path(track_id)):
+    for p in (pack_filename(track_id), sha1_path(track_id), cover_marker_path(track_id)):
         try:
             if p.exists():
                 p.unlink()
@@ -582,11 +623,14 @@ async def build_base_pack(track_items: list[dict]) -> Optional[tuple[bytes, str,
     if not track_items:
         return None
 
-    # 1. Ensure all micro-packs are built
+    # 1. Ensure all micro-packs are built (rebuilding if cover was missing)
     for item in track_items:
         tr_id = item["id"]
         zpath = pack_filename(tr_id)
-        if not zpath.exists() or not get_cached_sha1(tr_id):
+        cover_ref = item.get("cover_ref")
+        cover_marker = cover_marker_path(tr_id)
+        needs_build = not zpath.exists() or not get_cached_sha1(tr_id) or (cover_ref and not cover_marker.exists())
+        if needs_build:
             file_id = item.get("file_id")
             if file_id and not file_id.startswith("lazy:") and not file_id.startswith("pending:"):
                 try:
@@ -595,7 +639,7 @@ async def build_base_pack(track_items: list[dict]) -> Optional[tuple[bytes, str,
                         file_id,
                         title=item.get("title") or f"Track {tr_id}",
                         duration=item.get("duration"),
-                        cover_ref=item.get("cover_ref")
+                        cover_ref=cover_ref
                     )
                 except Exception as e:
                     logger.warning(f"Failed to ensure pack for track {tr_id} while building base pack: {e}")

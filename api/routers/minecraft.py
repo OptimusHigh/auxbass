@@ -48,7 +48,7 @@ def _extract_cover_ref(tr) -> Optional[str]:
     img_id = getattr(tr, "image_file_id", None)
     if img_id:
         return img_id
-    enr = tr.__dict__.get("enrichment")
+    enr = getattr(tr, "enrichment", None)
     if enr and getattr(enr, "cover_url", None):
         return enr.cover_url
     return None
