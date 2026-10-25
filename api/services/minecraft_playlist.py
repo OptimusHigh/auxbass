@@ -15,38 +15,30 @@ SYSTEM_PLAYLIST_DESCRIPTION = "Треки для проигрывателя в M
 
 
 async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playlist:
-    """Get or create the system playlist for a user. Idempotent and concurrency-safe."""
+    """Get or create the Minecraft system playlist for a user. Idempotent and concurrency-safe."""
+    from sqlalchemy import or_
     result = await db.execute(
         select(Playlist).where(
             Playlist.owner_id == user_id,
-            Playlist.is_system == True  # noqa: E712
+            or_(
+                Playlist.system_type == "minecraft",
+                Playlist.is_system == True,  # noqa: E712
+                Playlist.name == SYSTEM_PLAYLIST_NAME
+            )
         ).order_by(Playlist.id.asc())
     )
     playlists = result.scalars().all()
     if playlists:
         primary = playlists[0]
+        # Backfill system_type if missing
+        if primary.system_type != "minecraft" or not primary.is_system:
+            primary.system_type = "minecraft"
+            primary.is_system = True
         if len(playlists) > 1:
             for extra in playlists[1:]:
                 logger.warning(f"Cleaning duplicate system playlist {extra.id} for user {user_id}")
                 await db.delete(extra)
             await db.commit()
-        return primary
-
-    # Also check by name as fallback
-    result_name = await db.execute(
-        select(Playlist).where(
-            Playlist.owner_id == user_id,
-            Playlist.name == SYSTEM_PLAYLIST_NAME
-        ).order_by(Playlist.id.asc())
-    )
-    playlists_name = result_name.scalars().all()
-    if playlists_name:
-        primary = playlists_name[0]
-        primary.is_system = True
-        if len(playlists_name) > 1:
-            for extra in playlists_name[1:]:
-                await db.delete(extra)
-        await db.commit()
         return primary
 
     # Check if user exists, if not create minimal user (for ensure-user flow)
@@ -62,14 +54,15 @@ async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playl
         description=SYSTEM_PLAYLIST_DESCRIPTION,
         is_public=False,
         is_system=True,
+        system_type="minecraft",
     )
     db.add(pl)
     try:
         await db.flush()
         await db.refresh(pl)
-        logger.info(f"Created system playlist {pl.id} for user {user_id}")
+        logger.info(f"Created Minecraft playlist {pl.id} for user {user_id}")
     except Exception as e:
-        logger.error(f"Failed to create system playlist for {user_id}: {e}")
+        logger.error(f"Failed to create Minecraft playlist for {user_id}: {e}")
     return pl
 
 

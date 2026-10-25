@@ -203,6 +203,71 @@ async def get_minecraft_playlist(
     )
 
 
+def _minecraft_tracks_stmt():
+    """
+    Returns query for all tracks currently added to any player's Minecraft disc playlist (system_type='minecraft').
+    Filters out lazy/pending placeholders and unavailable tracks.
+    """
+    from sqlalchemy import or_
+    return (
+        select(Track)
+        .join(PlaylistTrack, PlaylistTrack.track_id == Track.id)
+        .join(Playlist, Playlist.id == PlaylistTrack.playlist_id)
+        .where(
+            or_(
+                Playlist.system_type == "minecraft",
+                (Playlist.is_system == True) & (Playlist.name.like("%Minecraft%")),  # noqa: E712
+            )
+        )
+        .where(Track.file_id.isnot(None))
+        .where(Track.is_unavailable == False)  # noqa: E712
+        .where(~Track.file_id.startswith("lazy:"))
+        .where(~Track.file_id.startswith("pending:"))
+        .options(selectinload(Track.enrichment))
+        .distinct()
+        .order_by(Track.id)
+    )
+
+
+@router.get("/packs/base.zip")
+async def get_base_pack_zip(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Serve master Base Music Pack. If missing, automatically builds it from all available tracks.
+    Must be defined BEFORE /packs/{track_id}.zip so FastAPI does not match 'base' as an integer track_id!
+    """
+    sha1 = get_base_pack_sha1()
+    if not BASE_PACK_FILENAME.exists() or not sha1:
+        tracks_db = (await db.execute(_minecraft_tracks_stmt())).scalars().all()
+        track_items = [
+            {
+                "id": t.id,
+                "file_id": t.file_id,
+                "title": t.title or f"Track {t.id}",
+                "duration": t.duration,
+                "cover_ref": _extract_cover_ref(t),
+            }
+            for t in tracks_db
+        ]
+        res = await build_base_pack(track_items)
+        if not res:
+            raise HTTPException(status_code=503, detail="Base pack is empty or build failed")
+        _, sha1, _ = res
+
+    return FileResponse(
+        path=BASE_PACK_FILENAME,
+        media_type="application/zip",
+        filename="ganjacraft_base_music.zip",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": f'"{sha1}"',
+            "X-Pack-UUID": str(base_pack_uuid()),
+        },
+    )
+
+
 @router.get("/packs/{track_id}.zip")
 async def get_pack_zip(
     track_id: int,
@@ -262,63 +327,6 @@ async def get_pack_zip(
     )
 
 
-def _minecraft_tracks_stmt():
-    """
-    Returns query for all tracks currently added to any player's Minecraft disc playlist (is_system=True).
-    Filters out lazy/pending placeholders.
-    """
-    return (
-        select(Track)
-        .join(PlaylistTrack, PlaylistTrack.track_id == Track.id)
-        .join(Playlist, Playlist.id == PlaylistTrack.playlist_id)
-        .where(Playlist.is_system == True)  # noqa: E712
-        .where(Track.file_id.isnot(None))
-        .where(~Track.file_id.startswith("lazy:"))
-        .where(~Track.file_id.startswith("pending:"))
-        .options(selectinload(Track.enrichment))
-        .distinct()
-        .order_by(Track.id)
-    )
-
-
-@router.get("/packs/base.zip")
-async def get_base_pack_zip(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Serve master Base Music Pack. If missing, automatically builds it from all available tracks.
-    """
-    sha1 = get_base_pack_sha1()
-    if not BASE_PACK_FILENAME.exists() or not sha1:
-        tracks_db = (await db.execute(_minecraft_tracks_stmt())).scalars().all()
-        track_items = [
-            {
-                "id": t.id,
-                "file_id": t.file_id,
-                "title": t.title or f"Track {t.id}",
-                "duration": t.duration,
-                "cover_ref": _extract_cover_ref(t),
-            }
-            for t in tracks_db
-        ]
-        res = await build_base_pack(track_items)
-        if not res:
-            raise HTTPException(status_code=503, detail="Base pack is empty or build failed")
-        _, sha1, _ = res
-
-    return FileResponse(
-        path=BASE_PACK_FILENAME,
-        media_type="application/zip",
-        filename="ganjacraft_base_music.zip",
-        headers={
-            "Cache-Control": "public, max-age=31536000, immutable",
-            "ETag": f'"{sha1}"',
-            "X-Pack-UUID": str(base_pack_uuid()),
-        },
-    )
-
-
 @router.get("/sync-manifest", dependencies=[Depends(verify_service_token)])
 async def get_sync_manifest(
     request: Request,
@@ -368,22 +376,27 @@ async def get_sync_manifest(
         if tr.id not in base_track_ids:
             sha1 = get_cached_sha1(tr.id)
             if not sha1:
-                import asyncio
-                asyncio.create_task(ensure_pack_for_track(
+                res = await ensure_pack_for_track(
                     tr.id, tr.file_id, tr.title or "",
                     duration=tr.duration,
                     cover_ref=_extract_cover_ref(tr)
-                ))
-            deltas.append({
-                "track_id": tr.id,
-                "title": tr.title or f"Track {tr.id}",
-                "artist": tr.artist,
-                "duration": tr.duration,
-                "file_id": tr.file_id,
-                "pack_uuid": str(pack_uuid_for_track(tr.id)),
-                "pack_url": f"{base_url}/api/minecraft/packs/{tr.id}.zip",
-                "sha1": sha1,
-            })
+                )
+                if res:
+                    _, sha1 = res
+                else:
+                    logger.warning(f"[minecraft] Skipping unbuildable delta track {tr.id} ({tr.title})")
+                    continue
+            if sha1:
+                deltas.append({
+                    "track_id": tr.id,
+                    "title": tr.title or f"Track {tr.id}",
+                    "artist": tr.artist,
+                    "duration": tr.duration,
+                    "file_id": tr.file_id,
+                    "pack_uuid": str(pack_uuid_for_track(tr.id)),
+                    "pack_url": f"{base_url}/api/minecraft/packs/{tr.id}.zip",
+                    "sha1": sha1,
+                })
 
     return {
         "base_pack": base_pack_info,

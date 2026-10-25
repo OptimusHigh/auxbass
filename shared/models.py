@@ -594,6 +594,7 @@ class Playlist(Base):
     share_code: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
     custom_cover_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    system_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)  # e.g. "minecraft"
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -602,6 +603,7 @@ class Playlist(Base):
     __table_args__ = (
         Index("idx_playlists_owner_system", "owner_id", "is_system"),
         Index("idx_playlists_is_system", "is_system"),
+        Index("idx_playlists_system_type", "system_type"),
     )
     
     # Relationships
