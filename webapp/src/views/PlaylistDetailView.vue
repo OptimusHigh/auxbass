@@ -14,14 +14,14 @@
       </div>
       <div class="hero-info">
         <h1 class="hero-title">{{ playlist.name }}</h1>
-        <p class="hero-meta" v-if="!playlist.is_system">
+        <p class="hero-meta" v-if="!isPersonalMinecraftPlaylist">
           <span>{{ playlist.track_count }} треков</span>
           <span v-if="playlist.is_public" class="public-badge"><Globe :size="14" /> Публичный</span>
           <span v-if="playlist.owner_name && !isOwner" class="owner-info" :class="{ 'clickable': !!playlist.owner_id }" @click="goToOwner">от {{ playlist.owner_name }}</span>
         </p>
-        <!-- MC track quota bar -->
+        <!-- MC track quota bar (ONLY for personal player Minecraft disc playlist) -->
         <McQuotaBar
-          v-if="playlist.is_system"
+          v-if="isPersonalMinecraftPlaylist"
           :current="quota?.current ?? (playlist.track_count || 0)"
           :max="quota?.max ?? 15"
           :rank="quota?.rank ?? 'player'"
@@ -29,6 +29,23 @@
           :max-duration-display="quota?.max_duration_display ?? '10 мин.'"
           @open-guide="openMinecraftGuide"
         />
+        <!-- Server Main Playlist Badge Row (Official Server Collection, unlimited) -->
+        <div v-else-if="isServerMainPlaylist" class="server-main-badge-row">
+          <div class="server-main-chip">
+            <span class="server-main-led"></span>
+            <span class="server-main-title">Серверный плейлист</span>
+            <span class="server-main-unlimited">Безлимитный • Для всех игроков</span>
+          </div>
+          <button 
+            type="button" 
+            class="server-guide-btn" 
+            title="Как это работает?" 
+            @click="openMinecraftGuide"
+          >
+            <HelpCircle :size="12" />
+            <span>Гайд</span>
+          </button>
+        </div>
         <TagChips
           v-if="playlist.tags?.length"
           :tags="playlist.tags"
@@ -271,8 +288,21 @@ const shufflePlay = () => {
 }
 
 // Computed
+const isServerMainPlaylist = computed(() => {
+  if (!playlist.value) return false
+  return playlist.value.system_type === 'minecraft_main' || playlist.value.name?.includes('GanjaCraft Main')
+})
+
+const isPersonalMinecraftPlaylist = computed(() => {
+  if (!playlist.value) return false
+  if (isServerMainPlaylist.value) return false
+  return playlist.value.system_type === 'minecraft' || (playlist.value.is_system && playlist.value.name?.includes('Minecraft Media'))
+})
+
 const isOwner = computed(() => {
   if (!playlist.value || !authStore.user) return true
+  // Admin is also considered owner/manager for server main playlist
+  if (isServerMainPlaylist.value) return true
   return playlist.value.owner_id === authStore.user.id || !playlist.value.owner_id
 })
 
@@ -300,9 +330,11 @@ const loadPlaylist = async (force = false) => {
       bypassCache: Boolean(force)
     })
     playlist.value = response.data
-    // Load quota for system playlists
-    if (response.data?.is_system && authStore.user?.id) {
+    // Load quota ONLY for personal player Minecraft playlists
+    if (isPersonalMinecraftPlaylist.value && authStore.user?.id) {
       loadQuota(authStore.user.id)
+    } else {
+      quota.value = null
     }
   } catch (error) {
     console.error('Failed to load playlist:', error)
@@ -573,5 +605,77 @@ watch(
   color: #eab308;
   font-size: 12px;
   line-height: 1.4;
+}
+
+.server-main-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+
+.server-main-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--r-md, 12px);
+  background: var(--c-bg-2, #1a1a1a);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow: 3px 3px 8px var(--sh-dark, rgba(0, 0, 0, 0.6)), -2px -2px 5px var(--sh-light, rgba(255, 255, 255, 0.03));
+}
+
+.server-main-led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c-accent, #1db954);
+  box-shadow: 0 0 8px var(--c-accent-glow, rgba(29, 185, 84, 0.7));
+  flex-shrink: 0;
+}
+
+.server-main-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-1, #ffffff);
+}
+
+.server-main-unlimited {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-accent, #1db954);
+  background: rgba(29, 185, 84, 0.1);
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(29, 185, 84, 0.2);
+}
+
+.server-guide-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--c-bg-2, #1a1a1a);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--c-text-2, #b0b0b0);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 2px 2px 5px var(--sh-dark, rgba(0, 0, 0, 0.5)), -1px -1px 3px var(--sh-light, rgba(255, 255, 255, 0.03));
+}
+
+.server-guide-btn:hover {
+  color: var(--c-text-1, #ffffff);
+  border-color: rgba(29, 185, 84, 0.35);
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.7), 0 0 8px rgba(29, 185, 84, 0.2);
+}
+
+.server-guide-btn:active {
+  transform: scale(0.96);
+  box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.7);
 }
 </style>

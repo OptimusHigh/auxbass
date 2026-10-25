@@ -35,6 +35,7 @@ class PlaylistResponse(BaseModel):
     tags: Optional[List[str]] = None  # Tags aggregated from playlist tracks
     is_public: bool = False
     is_system: bool = False
+    system_type: Optional[str] = None
     owner_id: Optional[int] = None
     owner_name: Optional[str] = None
     is_subscribed: bool = False  # Whether current user is subscribed
