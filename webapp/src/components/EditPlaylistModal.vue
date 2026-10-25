@@ -75,11 +75,35 @@
         </div>
       </div>
       
-      <!-- Search input -->
-      <div class="search-input-wrapper">
+      <!-- Navigation Tabs -->
+      <div class="edit-nav-tabs">
+        <button
+          type="button"
+          class="edit-nav-tab"
+          :class="{ active: activeTab === 'current' }"
+          @click="switchToCurrent"
+        >
+          <ListMusic :size="15" />
+          <span>В плейлисте</span>
+          <span class="tab-badge">{{ tracks.length }}</span>
+        </button>
+
+        <button
+          type="button"
+          class="edit-nav-tab add-tab"
+          :class="{ active: activeTab === 'add' }"
+          @click="switchToAdd"
+        >
+          <Plus :size="15" />
+          <span>Добавить треки</span>
+        </button>
+      </div>
+
+      <!-- Search input in Add tab -->
+      <div v-if="activeTab === 'add'" class="search-input-wrapper">
         <SearchBar
           v-model="searchQuery"
-          placeholder="Поиск треков для добавления..."
+          placeholder="Поиск по медиатеке..."
           :loading="searching"
           @input="debouncedSearch"
           @clear="clearSearch"
@@ -88,42 +112,16 @@
       
       <!-- Content area -->
       <div class="edit-content" ref="scrollContentRef">
-        <!-- Search results -->
-        <div v-if="searchQuery && librarySearchItems.length > 0" class="search-results">
-          <!-- Section: My Library -->
-          <div class="section-label">Моя библиотека ({{ librarySearchTotal }})</div>
-          <TrackSearchItem
-            v-for="track in librarySearchItems"
-            :key="'lib-' + track.id"
-            :track="track"
-            :isInPlaylist="isTrackInPlaylist(track.id)"
-            :isAdding="addingTrackId === track.id"
-            :isRemoving="removingTrackId === track.id"
-            @add="addTrack"
-            @remove="removeTrack"
-          />
-          <!-- Infinite scroll trigger for library search -->
-          <div ref="searchLoadTrigger" v-if="hasMoreSearchResults" class="load-trigger"></div>
-          <TrackSkeleton v-for="i in searchSkeletonCount" :key="'search-skel-' + i" />
-          <!-- Spacer for full scroll height of remaining library results -->
-          <div
-            v-if="librarySearchTotal - librarySearchItems.length > 0"
-            class="scroll-spacer"
-            :style="{ height: (librarySearchTotal - librarySearchItems.length) * 54 + 'px' }"
-          ></div>
-        </div>
-        
-        <div v-else-if="searchQuery && !searching" class="no-results search-empty-modal">
-          <p>В медиатеке ничего не найдено по запросу «{{ searchQuery }}»</p>
-          <button type="button" class="btn-global-search-modal" @click="goToGlobalSearch">
-            <Search :size="14" />
-            <span>Искать в глобальном поиске</span>
-          </button>
-        </div>
-        
-        <!-- Current playlist tracks -->
-        <div v-else class="current-tracks">
-          <div class="section-label">Треки в плейлисте ({{ tracks.length }})</div>
+        <!-- Tab 1: Current playlist tracks -->
+        <div v-if="activeTab === 'current'" class="current-tracks">
+          <div class="tracks-header-row">
+            <div class="section-label">Треки в плейлисте ({{ tracks.length }})</div>
+            <button type="button" class="btn-quick-add" @click="switchToAdd">
+              <Plus :size="13" />
+              <span>Добавить треки</span>
+            </button>
+          </div>
+
           <div v-if="tracks.length" class="tracks-editor">
             <EditableTrackItem
               v-for="(track, index) in tracks"
@@ -144,8 +142,53 @@
           </div>
           <div v-else class="empty-playlist-hint">
             <span><Music :size="32" /></span>
-            <p>Плейлист пуст</p>
-            <p class="hint">Найдите треки через поиск выше</p>
+            <p>В плейлисте пока нет треков</p>
+            <button type="button" class="empty-add-cta" @click="switchToAdd">
+              <Plus :size="15" />
+              <span>Выбрать треки из медиатеки</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tab 2: Add tracks from library -->
+        <div v-else class="add-tracks-view">
+          <div class="section-label">
+            {{ searchQuery ? `Результаты поиска (${librarySearchTotal})` : `Моя медиатека (${librarySearchTotal})` }}
+          </div>
+
+          <div v-if="librarySearchItems.length > 0" class="search-results">
+            <TrackSearchItem
+              v-for="track in librarySearchItems"
+              :key="'lib-' + track.id"
+              :track="track"
+              :isInPlaylist="isTrackInPlaylist(track.id)"
+              :isAdding="addingTrackId === track.id"
+              :isRemoving="removingTrackId === track.id"
+              @add="addTrack"
+              @remove="removeTrack"
+            />
+            <!-- Infinite scroll trigger for library search -->
+            <div ref="searchLoadTrigger" v-if="hasMoreSearchResults" class="load-trigger"></div>
+            <TrackSkeleton v-for="i in searchSkeletonCount" :key="'search-skel-' + i" />
+            <!-- Spacer for full scroll height of remaining library results -->
+            <div
+              v-if="librarySearchTotal - librarySearchItems.length > 0"
+              class="scroll-spacer"
+              :style="{ height: (librarySearchTotal - librarySearchItems.length) * 54 + 'px' }"
+            ></div>
+          </div>
+          
+          <div v-else-if="!searching" class="no-results search-empty-modal">
+            <p v-if="searchQuery">В медиатеке ничего не найдено по запросу «{{ searchQuery }}»</p>
+            <p v-else>В вашей медиатеке пока нет треков</p>
+            <button type="button" class="btn-global-search-modal" @click="goToGlobalSearch">
+              <Search :size="14" />
+              <span>Искать в глобальном поиске</span>
+            </button>
+          </div>
+
+          <div v-else class="loading-skeletons">
+            <TrackSkeleton v-for="i in 5" :key="'init-skel-' + i" />
           </div>
         </div>
       </div>
@@ -193,7 +236,7 @@ import TrackSearchItem from './TrackSearchItem.vue'
 import EditableTrackItem from './EditableTrackItem.vue'
 import TrackSkeleton from './TrackSkeleton.vue'
 import SearchBar from './ui/SearchBar.vue'
-import { X, Music, Upload, Trash2, Search, Image as ImageIcon, Lock } from 'lucide-vue-next'
+import { X, Music, Upload, Trash2, Search, Image as ImageIcon, Lock, Plus, ListMusic } from 'lucide-vue-next'
 import { getCoverUrl, CoverSize } from '@/utils'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
@@ -217,6 +260,20 @@ const tracks = ref([])
 const saving = ref(false)
 
 const isSystem = computed(() => Boolean(props.playlist?.is_system || props.playlist?.system_type === 'minecraft' || props.playlist?.system_type === 'minecraft_main'))
+
+// Navigation tabs: 'current' | 'add'
+const activeTab = ref('current')
+
+const switchToAdd = async () => {
+  activeTab.value = 'add'
+  if (librarySearchItems.value.length === 0 && !librarySearchLoading.value) {
+    await resetLibrarySearch()
+  }
+}
+
+const switchToCurrent = () => {
+  activeTab.value = 'current'
+}
 
 const scrollContentRef = ref(null)
 
@@ -413,14 +470,21 @@ watch(() => props.playlist, (pl) => {
   }
 }, { immediate: true })
 
-watch(() => props.show, (show) => {
+watch(() => props.show, async (show) => {
   if (show && props.playlist) {
     name.value = props.playlist.name || ''
     isPublic.value = props.playlist.is_public || false
     customCoverUrl.value = props.playlist.custom_cover_url || null
     tracks.value = [...(props.playlist.tracks || [])]
+    if (tracks.value.length === 0) {
+      activeTab.value = 'add'
+      await resetLibrarySearch()
+    } else {
+      activeTab.value = 'current'
+    }
   }
   if (!show) {
+    activeTab.value = 'current'
     clearSearch()
     clearLibrarySearch()
     deleteConfirmPending.value = false
@@ -835,8 +899,116 @@ const save = async () => {
   transform: translateX(16px);
 }
 
+.edit-nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: var(--c-bg-2);
+  border-bottom: 1px solid var(--c-bg-4);
+}
+
+.edit-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--c-bg-3);
+  color: var(--c-text-2);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 2px 2px 5px var(--sh-dark, rgba(0,0,0,0.3)), -1px -1px 3px var(--sh-light, rgba(255,255,255,0.03));
+}
+
+.edit-nav-tab:hover {
+  color: var(--c-text-1);
+  background: var(--c-bg-4);
+}
+
+.edit-nav-tab.active {
+  background: var(--c-bg-1);
+  color: var(--c-accent);
+  border-color: rgba(29, 185, 84, 0.3);
+  box-shadow: inset 2px 2px 4px var(--sh-inset-dark, rgba(0,0,0,0.5)), inset -1px -1px 2px var(--sh-inset-light, rgba(255,255,255,0.03)), 0 0 10px rgba(29, 185, 84, 0.15);
+}
+
+.edit-nav-tab.add-tab:not(.active) {
+  color: var(--c-accent);
+}
+
+.tab-badge {
+  background: var(--c-bg-4);
+  color: var(--c-text-1);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  margin-left: 2px;
+}
+
+.tracks-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-top: 8px;
+}
+
+.btn-quick-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 16px;
+  background: rgba(29, 185, 84, 0.12);
+  border: 1px solid rgba(29, 185, 84, 0.3);
+  color: var(--c-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-quick-add:hover {
+  background: var(--c-accent);
+  color: #000;
+  transform: translateY(-1px);
+  box-shadow: 0 0 10px rgba(29, 185, 84, 0.35);
+}
+
+.empty-add-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 9px 18px;
+  border-radius: 20px;
+  background: var(--c-accent);
+  color: #000;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 3px 10px rgba(29, 185, 84, 0.3);
+}
+
+.empty-add-cta:hover {
+  transform: scale(1.03);
+}
+
+.loading-skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .search-input-wrapper {
-  padding: 16px 20px;
+  padding: 12px 20px;
 }
 
 .search-input-wrapper :deep(.search-bar) {

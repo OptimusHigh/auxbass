@@ -255,14 +255,19 @@
                     <ChevronRight :size="16" class="submenu-arrow" />
                   </button>
 
-                  <!-- Only for user playlists that user owns (non-system) -->
-                  <template v-if="isPlaylistOwner && !menuData?.is_system && menuData?.system_type !== 'minecraft' && menuData?.system_type !== 'minecraft_main'">
+                  <!-- Only for user playlists that user owns -->
+                  <template v-if="isPlaylistOwner">
                     <div class="menu-divider" />
-                    <button class="menu-item" @mouseenter="handleRegularItemMouseEnter" @click="exec('rename')">
-                      <Pencil :size="18" />
-                      <span>Переименовать</span>
+                    <button class="menu-item" @mouseenter="handleRegularItemMouseEnter" @click="exec('edit')">
+                      <Edit3 :size="18" />
+                      <span>Редактировать</span>
                     </button>
-                    <button class="menu-item danger" @mouseenter="handleRegularItemMouseEnter" @click="exec('delete')">
+                    <button 
+                      v-if="!menuData?.is_system && menuData?.system_type !== 'minecraft' && menuData?.system_type !== 'minecraft_main'" 
+                      class="menu-item danger" 
+                      @mouseenter="handleRegularItemMouseEnter" 
+                      @click="exec('delete')"
+                    >
                       <Trash2 :size="18" />
                       <span>Удалить плейлист</span>
                     </button>
@@ -464,28 +469,15 @@
     </Transition>
   </Teleport>
 
-  <!-- Rename Playlist Modal -->
-  <Teleport to="body">
-    <Transition name="fade">
-      <div v-if="showRenameModal" class="modal-overlay" @click="closeRenameModal">
-        <div class="modal-content" @click.stop>
-          <h3>Переименовать плейлист</h3>
-          <input 
-            v-model="renameValue" 
-            type="text" 
-            class="modal-input"
-            placeholder="Название плейлиста"
-            @keyup.enter="confirmRename"
-            ref="renameInput"
-          />
-          <div class="modal-actions">
-            <button type="button" class="modal-btn cancel" @click="closeRenameModal">Отмена</button>
-            <button type="button" class="modal-btn confirm" @click="confirmRename">Сохранить</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+  <!-- Edit Playlist Modal -->
+  <EditPlaylistModal
+    :show="showEditPlaylistModal"
+    :playlist="editingPlaylist"
+    @close="closeEditPlaylistModal"
+    @save="handleSavePlaylist"
+    @delete="handleDeletePlaylist"
+    @update:tracks="handleTracksUpdate"
+  />
 </template>
 
 <script setup>
@@ -499,9 +491,10 @@ import { useShare } from '@/composables/useShare'
 import { getAllTrackArtists } from '@/utils/formatters'
 import PlaylistPicker from '@/components/PlaylistPicker.vue'
 import EditTrackModal from '@/components/EditTrackModal.vue'
+import EditPlaylistModal from '@/components/EditPlaylistModal.vue'
 import TagChips from '@/components/TagChips.vue'
 import { 
-  X, User, Disc3, Play, ListMusic, Plus, Minus, Pencil, Check,
+  X, User, Disc3, Play, ListMusic, Plus, Minus, Pencil, Check, Edit3,
   Trash2, FolderOpen, Shuffle, Music, Mic2, ChevronRight, ChevronDown,
   ChevronLeft, ThumbsDown, Heart, Share2, Pin, PinOff, Link2, Send, CloudDownload, AtSign
 } from 'lucide-vue-next'
@@ -597,10 +590,10 @@ const {
   executeAction,
   showPlaylistPicker,
   showEditModal,
-  showRenameModal,
+  showEditPlaylistModal,
   showCreatePlaylist,
   editingItem,
-  renameValue,
+  editingPlaylist,
   newPlaylistName,
   closePlaylistPicker,
   onPlaylistAdded,
@@ -609,8 +602,10 @@ const {
   confirmCreatePlaylist,
   closeEditModal,
   onTrackSaved,
-  closeRenameModal,
-  confirmRename,
+  closeEditPlaylistModal,
+  handleSavePlaylist,
+  handleDeletePlaylist,
+  handleTracksUpdate,
 } = useContextMenu()
 
 const closeMenu = () => {
@@ -622,13 +617,6 @@ const closeMenu = () => {
 }
 
 const createPlaylistInput = ref(null)
-
-// Auto-focus rename input
-watch(showRenameModal, (show) => {
-  if (show) {
-    nextTick(() => renameInput.value?.focus())
-  }
-})
 
 // Auto-focus create playlist input
 watch(showCreatePlaylist, (show) => {

@@ -31,10 +31,10 @@ const menuPosition = ref({ x: 0, y: 0 })  // Mouse position for desktop context 
 // Modal states
 const showPlaylistPicker = ref(false)
 const showEditModal = ref(false)
-const showRenameModal = ref(false)
+const showEditPlaylistModal = ref(false)
 const showCreatePlaylist = ref(false)
 const editingItem = ref(null)
-const renameValue = ref('')
+const editingPlaylist = ref(null)
 const newPlaylistName = ref('')
 
 /**
@@ -415,11 +415,21 @@ export function useContextMenu() {
       closeMenu()
     },
 
-    rename: (playlist) => {
+    edit: async (playlist) => {
       closeMenu()
-      editingItem.value = playlist
-      renameValue.value = playlist?.name || ''
-      showRenameModal.value = true
+      if (!playlist?.id) return
+      try {
+        if (!playlist.tracks || playlist.tracks.length === 0) {
+          const res = await playlistsApi.getOne(playlist.id)
+          editingPlaylist.value = res.data
+        } else {
+          editingPlaylist.value = { ...playlist }
+        }
+      } catch (err) {
+        console.error('Failed to load playlist for edit:', err)
+        editingPlaylist.value = { ...playlist, tracks: [] }
+      }
+      showEditPlaylistModal.value = true
     },
 
     delete: async (playlist) => {
@@ -739,23 +749,51 @@ export function useContextMenu() {
     uiStore.toast.success('Сохранено', 'Трек обновлён')
   }
 
-  const closeRenameModal = () => {
-    showRenameModal.value = false
-    editingItem.value = null
-    renameValue.value = ''
+  const closeEditPlaylistModal = () => {
+    showEditPlaylistModal.value = false
+    editingPlaylist.value = null
   }
 
-  const confirmRename = async () => {
-    const playlist = editingItem.value
-    if (!playlist?.id || !renameValue.value.trim()) return
-    
+  const handleSavePlaylist = async ({ name, isPublic, covers, tracks: savedTracks }) => {
+    if (editingPlaylist.value) {
+      if (!editingPlaylist.value.is_system) {
+        editingPlaylist.value.name = name
+      }
+      editingPlaylist.value.is_public = isPublic
+      if (savedTracks) {
+        editingPlaylist.value.tracks = savedTracks
+        editingPlaylist.value.track_count = savedTracks.length
+      }
+      if (covers?.length) {
+        editingPlaylist.value.covers = covers
+      }
+    }
+    showEditPlaylistModal.value = false
+    uiStore.toast.success('Сохранено', 'Плейлист обновлён')
+    if (editingPlaylist.value?.id) {
+      await libraryStore.notifyPlaylistChange(editingPlaylist.value.id)
+    }
+    editingPlaylist.value = null
+  }
+
+  const handleDeletePlaylist = async () => {
+    const pl = editingPlaylist.value
+    if (!pl?.id) return
     try {
-      await libraryStore.updatePlaylist(playlist.id, { name: renameValue.value.trim() })
-      uiStore.toast.success('Переименовано', renameValue.value.trim())
-      closeRenameModal()
+      await libraryStore.deletePlaylist(pl.id)
+      uiStore.toast.success('Удалено', `Плейлист "${pl.name}" удалён`)
+      showEditPlaylistModal.value = false
+      editingPlaylist.value = null
     } catch (error) {
-      console.error('Failed to rename playlist:', error)
-      uiStore.toast.error('Ошибка', 'Не удалось переименовать')
+      console.error('Failed to delete playlist:', error)
+      uiStore.toast.error('Ошибка', 'Не удалось удалить плейлист')
+    }
+  }
+
+  const handleTracksUpdate = (tracks) => {
+    if (editingPlaylist.value) {
+      editingPlaylist.value.tracks = tracks
+      editingPlaylist.value.track_count = tracks.length
     }
   }
 
@@ -843,10 +881,10 @@ export function useContextMenu() {
     // Modal states
     showPlaylistPicker,
     showEditModal,
-    showRenameModal,
+    showEditPlaylistModal,
     showCreatePlaylist,
     editingItem,
-    renameValue,
+    editingPlaylist,
     newPlaylistName,
 
     // Modal handlers
@@ -857,7 +895,9 @@ export function useContextMenu() {
     confirmCreatePlaylist,
     closeEditModal,
     onTrackSaved,
-    closeRenameModal,
-    confirmRename,
+    closeEditPlaylistModal,
+    handleSavePlaylist,
+    handleDeletePlaylist,
+    handleTracksUpdate,
   }
 }
