@@ -303,6 +303,23 @@ async def cmd_menu(message: Message, state: FSMContext):
     )
 
 
+@router.message(Command("guide", "help_guide"))
+async def cmd_guide(message: Message, state: FSMContext):
+    """Show player guide"""
+    await state.clear()
+    from aiogram.types import WebAppInfo
+    sep = "&" if "?" in settings.webapp_url else "?"
+    guide_url = f"{settings.webapp_url}{sep}startapp=guide"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 Открыть гайд по плееру", web_app=WebAppInfo(url=guide_url))]
+    ])
+    await message.answer(
+        f"📖 <b>Гайдлайн по {settings.display_name}</b>\n\n"
+        "Узнай, как настроить резервный канал, искать музыку по ссылкам и слушать треки в Hi-Fi качестве без интернета.",
+        reply_markup=kb,
+    )
+
+
 @router.message(Command("channel"))
 async def cmd_channel(message: Message, state: FSMContext):
     """Channel section"""

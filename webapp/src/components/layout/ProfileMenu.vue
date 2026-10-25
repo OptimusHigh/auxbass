@@ -179,18 +179,11 @@
               <span class="item-label">Установить приложение</span>
             </button>
 
-            <button class="profile-menu-item" @click="handleOpenGuide('default')">
+            <button class="profile-menu-item" @click="handleOpenGuide">
               <div class="item-icon-box">
-                <Headphones :size="18" />
+                <HelpCircle :size="18" />
               </div>
-              <span class="item-label">Гайд по плееру (Меломан)</span>
-            </button>
-
-            <button class="profile-menu-item" @click="handleOpenGuide('minecraft')">
-              <div class="item-icon-box">
-                <Disc :size="18" />
-              </div>
-              <span class="item-label">Гайд по Minecraft (Пластинки)</span>
+              <span class="item-label">Гайд по плееру</span>
             </button>
           </div>
 

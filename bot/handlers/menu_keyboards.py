@@ -18,11 +18,17 @@ settings = get_settings()
 # ──────────────────────── Main Menu ────────────────────────
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Main menu — sleek and minimal with prominent WebApp button"""
+    """Main menu — sleek and minimal with prominent WebApp button and guide"""
+    sep = "&" if "?" in settings.webapp_url else "?"
+    guide_url = f"{settings.webapp_url}{sep}startapp=guide"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="🎵 Открыть плеер",
             web_app=WebAppInfo(url=settings.webapp_url),
+        )],
+        [InlineKeyboardButton(
+            text="📖 Гайд по плееру",
+            web_app=WebAppInfo(url=guide_url),
         )],
         [
             InlineKeyboardButton(text="☁️ Мой канал", callback_data="menu:channel"),

@@ -9,27 +9,10 @@
         <div class="guide-modal-container neu-card">
           <!-- Header -->
           <div class="guide-modal-header">
-            <div class="guide-mode-switch neu-concave">
-              <button 
-                class="guide-mode-btn" 
-                :class="{ active: guideMode === 'default' }"
-                @click="switchGuideMode('default')"
-                title="Гайд по плееру (Меломан)"
-                type="button"
-              >
-                <Headphones :size="13" />
-                <span>Плеер</span>
-              </button>
-              <button 
-                class="guide-mode-btn" 
-                :class="{ active: guideMode === 'minecraft' }"
-                @click="switchGuideMode('minecraft')"
-                title="Гайд по Minecraft (Пластинки)"
-                type="button"
-              >
-                <Gamepad2 :size="13" />
-                <span>Minecraft</span>
-              </button>
+            <div class="guide-badge">
+              <Gamepad2 v-if="guideMode === 'minecraft'" :size="14" class="guide-badge-icon" />
+              <Headphones v-else :size="14" class="guide-badge-icon" />
+              <span>{{ guideMode === 'minecraft' ? 'GanjaCraft Hub' : 'AuxBass Guide' }}</span>
             </div>
             
             <div class="guide-header-actions">
@@ -461,11 +444,6 @@ const activeStep = computed(() => {
   return activeSteps.value[stepIndex.value] || activeSteps.value[0]
 })
 
-const switchGuideMode = (newMode) => {
-  guideMode.value = newMode
-  stepIndex.value = 0
-}
-
 const navigateToSystemPlaylist = async () => {
   try {
     const { playlistsApi } = await import('@/api')
@@ -563,45 +541,6 @@ const handleFinish = async () => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
-}
-
-.guide-mode-switch {
-  display: inline-flex;
-  align-items: center;
-  padding: 3px;
-  border-radius: var(--r-full, 999px);
-  background: var(--c-bg-0, #0D0D0D);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: inset 2px 2px 5px var(--sh-inset-dark, rgba(0,0,0,0.65)),
-              inset -1px -1px 2px var(--sh-inset-light, rgba(255,255,255,0.02));
-  gap: 2px;
-}
-
-.guide-mode-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border-radius: var(--r-full, 999px);
-  border: none;
-  background: transparent;
-  color: var(--c-text-2, #B0B0B0);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.16s ease;
-  user-select: none;
-}
-
-.guide-mode-btn:hover {
-  color: #FFFFFF;
-}
-
-.guide-mode-btn.active {
-  background: var(--c-bg-3, #222222);
-  color: var(--c-accent, #1db954);
-  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.5),
-              -1px -1px 3px rgba(255, 255, 255, 0.04);
 }
 
 .guide-badge {
