@@ -178,6 +178,13 @@
               </div>
               <span class="item-label">Установить приложение</span>
             </button>
+
+            <button class="profile-menu-item" @click="handleOpenGuide">
+              <div class="item-icon-box">
+                <HelpCircle :size="18" />
+              </div>
+              <span class="item-label">Гайды и помощь</span>
+            </button>
           </div>
 
           <div class="profile-menu-divider"></div>
@@ -217,8 +224,10 @@ import {
   Check,
   AlertCircle,
   Maximize2,
+  HelpCircle,
   X
 } from 'lucide-vue-next'
+import { useWelcomeGuide } from '@/composables/useWelcomeGuide'
 
 const props = defineProps({
   modelValue: {
@@ -339,6 +348,13 @@ const goToMyProfile = () => {
 const handleInstallPwa = () => {
   close()
   pwaInstall.promptInstall()
+}
+
+const welcomeGuide = useWelcomeGuide()
+const handleOpenGuide = () => {
+  close()
+  const mode = authStore.user?.mc_rank ? 'minecraft' : 'default'
+  welcomeGuide.openGuide(mode)
 }
 
 const handleLogout = () => {

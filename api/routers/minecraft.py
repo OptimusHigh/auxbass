@@ -9,7 +9,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -56,6 +56,18 @@ class UpdateRankRequest(BaseModel):
     telegram_id: int
     rank: str
     max_tracks: int
+
+
+class ForwardTrackRequest(BaseModel):
+    telegram_id: int
+    file_id: str
+    file_unique_id: Optional[str] = None
+    title: Optional[str] = None
+    artist: Optional[str] = None
+    duration: Optional[int] = None
+    file_size: Optional[int] = None
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class TrackManifestItem(BaseModel):
@@ -357,3 +369,109 @@ async def get_quota(
         "rank": rank,
         "rank_display": rank_display_map.get(rank, rank.capitalize()),
     }
+
+
+@router.post("/track/forward", dependencies=[Depends(verify_service_token)])
+async def forward_track_to_minecraft_playlist(
+    data: ForwardTrackRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Fast-track endpoint: accepts an audio file forwarded via Telegram bot
+    and adds it directly to user's system "Minecraft Media" playlist.
+    """
+    import asyncio
+    from shared.models import utcnow, LibrarySource
+    from bot.services import track_service
+
+    # Ensure user & system playlist exist
+    user, pl = await ensure_user_and_system_playlist(telegram_id=data.telegram_id, db=db)
+
+    # Check quota
+    count_res = await db.execute(
+        select(func.count()).where(PlaylistTrack.playlist_id == pl.id)
+    )
+    current_count = count_res.scalar() or 0
+    max_tracks = getattr(user, "mc_max_tracks", 5) or 5
+    if current_count >= max_tracks:
+        rank_id = getattr(user, "mc_rank", "noob") or "noob"
+        rank_names = {
+            "noob": "Новичок", "player": "Игрок", "veteran": "Ветеран",
+            "pro": "Про", "elite": "Элита", "legend": "Легенда",
+        }
+        rank_name = rank_names.get(rank_id, rank_id.capitalize())
+        raise HTTPException(
+            status_code=403,
+            detail=f"Лимит пластинок ранга «{rank_name}» исчерпан ({max_tracks} шт.). Повышение: /ranks",
+        )
+
+    # Save track via standard track_service pipeline
+    unique_id = data.file_unique_id or f"tg_fwd_{data.file_id[:16]}"
+    res = await track_service.save_track(
+        user_id=data.telegram_id,
+        file_id=data.file_id,
+        file_unique_id=unique_id,
+        title=data.title,
+        artist=data.artist,
+        duration=data.duration,
+        file_size=data.file_size,
+        file_name=data.file_name,
+        mime_type=data.mime_type,
+        library_source=LibrarySource.UPLOADED,
+        enrich=True,
+    )
+    track_id = res.track_id
+
+    # Check if already in system playlist
+    existing_pt = await db.execute(
+        select(PlaylistTrack).where(
+            PlaylistTrack.playlist_id == pl.id,
+            PlaylistTrack.track_id == track_id,
+        )
+    )
+    if existing_pt.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="Трек уже добавлен в пластинки",
+        )
+
+    # Add to playlist
+    max_pos = await db.scalar(
+        select(func.coalesce(func.max(PlaylistTrack.position), 0))
+        .where(PlaylistTrack.playlist_id == pl.id)
+    ) or 0
+
+    pt = PlaylistTrack(
+        playlist_id=pl.id,
+        track_id=track_id,
+        position=max_pos + 1,
+    )
+    pl.updated_at = utcnow()
+    db.add(pt)
+    await db.commit()
+
+    # Trigger background micro-pack compilation
+    title = data.title or (data.file_name.rsplit(".", 1)[0] if data.file_name else "Track")
+    asyncio.create_task(
+        ensure_pack_for_track(
+            track_id,
+            data.file_id,
+            title,
+            duration=data.duration,
+        )
+    )
+
+    logger.info(
+        f"[minecraft] added fast-track {track_id} to system playlist {pl.id} for user {data.telegram_id} ({current_count + 1}/{max_tracks})"
+    )
+
+    return {
+        "status": "ok",
+        "track_id": track_id,
+        "title": title,
+        "artist": data.artist or "Неизвестный исполнитель",
+        "current": current_count + 1,
+        "max": max_tracks,
+    }
+

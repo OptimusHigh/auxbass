@@ -190,6 +190,7 @@
       <!-- PWA install banner & guide modal -->
       <PwaInstallBanner />
       <PwaInstallModal />
+      <WelcomeGuideModal />
 
       <!-- Global toast notifications -->
       <ToastContainer />
@@ -259,6 +260,7 @@ import { MobileFooter } from '@/components/layout'
 import { useNetworkMonitor } from '@/composables/useNetworkMonitor'
 import { usePullToRefresh } from '@/composables/usePullToRefresh'
 import { usePwaInstall } from '@/composables/usePwaInstall'
+import { useWelcomeGuide } from '@/composables/useWelcomeGuide'
 import { initAppUpdateListeners } from '@/composables/useAppUpdate'
 import { Library } from 'lucide-vue-next'
 import { tracksApi } from '@/api/client'
@@ -275,6 +277,7 @@ const ProfileMenu = defineAsyncComponent(() => import('@/components/layout/Profi
 const ShareModal = defineAsyncComponent(() => import('@/components/ShareModal.vue'))
 const PwaInstallModal = defineAsyncComponent(() => import('@/components/PwaInstallModal.vue'))
 const PwaInstallBanner = defineAsyncComponent(() => import('@/components/PwaInstallBanner.vue'))
+const WelcomeGuideModal = defineAsyncComponent(() => import('@/components/WelcomeGuideModal.vue'))
 const AppUpdatePrompt = defineAsyncComponent(() => import('@/components/AppUpdatePrompt.vue'))
 const ChannelBanner = defineAsyncComponent(() => import('@/components/ChannelBanner.vue'))
 const NetworkBanner = defineAsyncComponent(() => import('@/components/NetworkBanner.vue'))
@@ -292,6 +295,7 @@ const externalAccountsStore = useExternalAccountsStore()
 const telegram = inject('telegram')
 const networkMonitor = useNetworkMonitor()
 const pwaInstall = usePwaInstall()
+const welcomeGuide = useWelcomeGuide()
 const showProfileMenu = ref(false)
 
 // Pull-to-refresh — bound to .main-content via scrollRef
@@ -812,7 +816,7 @@ onMounted(async () => {
         if (aid) {
           router.push(`/album/${aid}`)
         }
-      } else if (startParam === 'minecraft_media') {
+      } else if (startParam === 'minecraft_media' || startParam === 'minecraft_media_guide') {
         // Minecraft deep-link: open system playlist (ensure it exists via auth ensure)
         try {
           const { playlistsApi } = await import('@/api')
@@ -889,6 +893,21 @@ onMounted(async () => {
   // Handle deep link / start_param navigation
   await handleStartParams()
   
+  // Trigger onboarding guide if eligible
+  try {
+    const rawParam = telegram?.initDataUnsafe?.start_param || ''
+    const isMcParam = rawParam === 'minecraft_media' || rawParam === 'minecraft_media_guide' || window.location.search.includes('minecraft')
+    if (isMcParam) {
+      if (rawParam === 'minecraft_media_guide' || !welcomeGuide.hasSeenGuide('minecraft')) {
+        setTimeout(() => welcomeGuide.openGuide('minecraft'), 500)
+      }
+    } else if (!welcomeGuide.hasSeenGuide('default') && !window.location.search.includes('no_guide')) {
+      setTimeout(() => welcomeGuide.openGuide('default'), 900)
+    }
+  } catch (err) {
+    console.warn('[App] Welcome guide init error:', err)
+  }
+
   // === Start network monitoring & update tracking ===
   networkMonitor.startMonitoring()
   initAppUpdateListeners()
