@@ -522,22 +522,30 @@ async def update_rank(
     return {"status": "ok", "telegram_id": data.telegram_id, "rank": data.rank, "max_tracks": data.max_tracks}
 
 
-@router.get("/quota/{telegram_id}", dependencies=[Depends(verify_service_token)])
+@router.get("/quota/{telegram_id}")
 async def get_quota(
     telegram_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Return current track usage and limit for a user's system playlist.
+    """Return current track usage and limit for a user's Minecraft playlist.
 
     Used by ganj4core and Vue frontend (via /api/minecraft/quota/{telegram_id}).
+    Public read access (safe: returns only rank and disk limits).
     """
+    from sqlalchemy import or_
     user = await db.get(User, telegram_id)
     if not user:
         return {"current": 0, "max": 5, "rank": "noob", "rank_display": "Новичок"}
 
-    # Get system playlist
+    # Get Minecraft playlist
     pl_result = await db.execute(
-        select(Playlist).where(Playlist.owner_id == telegram_id, Playlist.is_system == True)  # noqa: E712
+        select(Playlist).where(
+            Playlist.owner_id == telegram_id,
+            or_(
+                Playlist.system_type == "minecraft",
+                (Playlist.is_system == True) & (Playlist.name.like("%Minecraft%")),  # noqa: E712
+            )
+        )
     )
     pl = pl_result.scalar_one_or_none()
     current = 0
