@@ -1588,6 +1588,13 @@ async def mark_unavailable(
         logger.info(f"Ignoring mark_unavailable for large track {track_id} ({track.file_size} bytes)")
         return {"status": "ignored_large_file", "track_id": track_id}
     
+    # Try to auto-heal from channel message before declaring dead
+    from api.routers.player import refresh_file_id_from_channel
+    new_file_id, err_code, _ = await refresh_file_id_from_channel(track_id, db)
+    if new_file_id:
+        logger.info(f"mark_unavailable auto-healed track {track_id} from channel")
+        return {"status": "auto_healed", "track_id": track_id}
+
     # Only mark if not already unavailable
     if not track.is_unavailable:
         track.is_unavailable = True

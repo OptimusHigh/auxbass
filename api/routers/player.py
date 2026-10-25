@@ -978,8 +978,11 @@ async def get_batch_stream_urls(
             track.is_unavailable = False
             tracks_to_update.append(track_id)
         elif not file_path and track and not track.is_unavailable and not is_hd_or_large:
-            # Do NOT mark tracks created within the last 10 minutes as unavailable
-            # (they may be actively importing or propagating to Telegram CDN)
+            # NEVER mark as unavailable if error was transient or track has channel backup
+            if err_code in ("network_error", "forward_failed", "timeout", "flood_wait"):
+                continue
+
+            # Check if track has a confirmed channel message before declaring it dead
             now = utcnow()
             created = track.created_at
             if created and created.tzinfo is not None:
@@ -987,11 +990,12 @@ async def get_batch_stream_urls(
             is_recent = bool(created and (now - created).total_seconds() < 600)
             
             if not is_recent:
-                # Mark as unavailable for tracks whose telegram path is truly gone or channel is dead
-                track.is_unavailable = True
-                tracks_to_mark_unavailable.append(track_id)
-            else:
-                logger.debug(f"[Batch] Skipping mark_unavailable for recently created track {track_id}")
+                # Only mark as unavailable if channel access was explicitly denied or track has no channel message
+                if err_code == "channel_access_denied" or err_code == "no_audio":
+                    track.is_unavailable = True
+                    tracks_to_mark_unavailable.append(track_id)
+                else:
+                    logger.debug(f"[Batch] Skipping mark_unavailable for track {track_id} (err_code: {err_code})")
     
     # Commit updates in bulk
     if tracks_to_update or tracks_to_mark_unavailable:

@@ -888,11 +888,17 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       if (statusCode === 503) {
-        const isLargeFile = detail.includes('слишком большой') || (track.file_size && track.file_size > 20 * 1024 * 1024)
-        const isHdFormat = detail.includes('высокого качества') || detail.includes('HD') || detail.includes('FLAC')
+        const detailStr = typeof detail === 'string' ? detail : ''
+        const isLargeFile = detailStr.includes('слишком большой') || (track.file_size && track.file_size > 20 * 1024 * 1024)
+        const isHdFormat = detailStr.includes('высокого качества') || detailStr.includes('HD') || detailStr.includes('FLAC')
         lastError.value = { type: isLargeFile ? 'too_large' : isHdFormat ? 'hd_only' : 'unavailable', track, message: detail }
         if (!isLargeFile && !isHdFormat) {
-          try { await tracksApi.markUnavailable(track.id); track.is_unavailable = true } catch (_) {}
+          try {
+            const res = await tracksApi.markUnavailable(track.id)
+            if (res.data?.status === 'marked_unavailable') {
+              track.is_unavailable = true
+            }
+          } catch (_) {}
         }
         if (onTrackUnavailableCallback && !isSkipping) {
           onTrackUnavailableCallback(track, detail, isLargeFile || isHdFormat)
