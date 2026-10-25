@@ -356,13 +356,34 @@ async def transcode_to_ogg_mono(source_path: Path, out_path: Path, is_long_mix: 
     return True
 
 
-async def download_telegram_file(file_id: str, dest: Path) -> bool:
-    """Download Telegram file via getFile + file download. Returns True on success."""
-    from api.routers.player import get_telegram_file_path
+async def download_telegram_file(file_id: str, dest: Path, track_id: Optional[int] = None) -> bool:
+    """Download Telegram file via getFile + file download.
+    If file_id is stale or expired, automatically refreshes file_id from channel message.
+    """
+    from api.routers.player import get_telegram_file_path, refresh_file_id_from_channel
     import aiohttp
     from shared.config import get_settings as _gs
     s = _gs()
     file_path = await get_telegram_file_path(file_id)
+    if not file_path and track_id:
+        logger.info(f"[MinecraftPack] Track {track_id} file_id stale or unavailable, attempting refresh from channel...")
+        try:
+            from shared.database import async_session
+            from shared.models import Track
+            async with async_session() as db:
+                new_file_id, err, ch_title = await refresh_file_id_from_channel(track_id, db)
+                if new_file_id:
+                    track = await db.get(Track, track_id)
+                    if track:
+                        track.file_id = new_file_id
+                        track.is_unavailable = False
+                        await db.commit()
+                    file_id = new_file_id
+                    file_path = await get_telegram_file_path(new_file_id)
+                    logger.info(f"[MinecraftPack] Track {track_id} file_id refreshed successfully!")
+        except Exception as e:
+            logger.warning(f"[MinecraftPack] Failed to auto-refresh file_id for track {track_id}: {e}")
+
     if not file_path:
         logger.warning(f"Could not get file_path for {file_id[:20]}...")
         return False
@@ -485,7 +506,7 @@ async def ensure_pack_for_track(
         if ogg_cache_path.exists() and ogg_cache_path.stat().st_size > 0:
             ogg_bytes = ogg_cache_path.read_bytes()
         else:
-            ok = await download_telegram_file(file_id, src_path)
+            ok = await download_telegram_file(file_id, src_path, track_id=track_id)
             if not ok or not src_path.exists() or src_path.stat().st_size == 0:
                 logger.error(f"Failed to download source for track {track_id}")
                 return None
