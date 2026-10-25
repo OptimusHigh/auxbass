@@ -74,15 +74,15 @@ async def get_or_create_server_main_playlist(db: AsyncSession) -> Playlist:
 
 
 async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playlist:
-    """Get or create the Minecraft system playlist for a user. Idempotent and concurrency-safe."""
-    from sqlalchemy import or_
+    """Get or create the personal Minecraft system playlist for a user. Idempotent and concurrency-safe."""
+    from sqlalchemy import or_, and_
     result = await db.execute(
         select(Playlist).where(
             Playlist.owner_id == user_id,
+            Playlist.system_type != "minecraft_main",
             or_(
                 Playlist.system_type == "minecraft",
-                Playlist.is_system == True,  # noqa: E712
-                Playlist.name == SYSTEM_PLAYLIST_NAME
+                and_(Playlist.is_system == True, Playlist.name == SYSTEM_PLAYLIST_NAME),  # noqa: E712
             )
         ).order_by(Playlist.id.asc())
     )
@@ -95,8 +95,9 @@ async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playl
             primary.is_system = True
         if len(playlists) > 1:
             for extra in playlists[1:]:
-                logger.warning(f"Cleaning duplicate system playlist {extra.id} for user {user_id}")
-                await db.delete(extra)
+                if getattr(extra, "system_type", None) != "minecraft_main":
+                    logger.warning(f"Cleaning duplicate personal system playlist {extra.id} for user {user_id}")
+                    await db.delete(extra)
             await db.commit()
         return primary
 
