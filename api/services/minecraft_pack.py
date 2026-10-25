@@ -681,7 +681,7 @@ async def _nightly_rebuild_loop():
 
             logger.info("[MinecraftPack] Running scheduled nightly Base Pack consolidation (04:00)...")
             from shared.database import async_session
-            from shared.models import Track
+            from shared.models import Track, Playlist, PlaylistTrack
             from sqlalchemy import select
             from sqlalchemy.orm import selectinload
 
@@ -690,10 +690,14 @@ async def _nightly_rebuild_loop():
                 base_track_ids = set(meta.get("track_ids", []))
                 stmt = (
                     select(Track)
-                    .options(selectinload(Track.enrichment))
+                    .join(PlaylistTrack, PlaylistTrack.track_id == Track.id)
+                    .join(Playlist, Playlist.id == PlaylistTrack.playlist_id)
+                    .where(Playlist.is_system == True)  # noqa: E712
                     .where(Track.file_id.isnot(None))
                     .where(~Track.file_id.startswith("lazy:"))
                     .where(~Track.file_id.startswith("pending:"))
+                    .options(selectinload(Track.enrichment))
+                    .distinct()
                     .order_by(Track.id)
                 )
                 all_tracks = (await db.execute(stmt)).scalars().all()

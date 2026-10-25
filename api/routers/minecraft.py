@@ -262,6 +262,25 @@ async def get_pack_zip(
     )
 
 
+def _minecraft_tracks_stmt():
+    """
+    Returns query for all tracks currently added to any player's Minecraft disc playlist (is_system=True).
+    Filters out lazy/pending placeholders.
+    """
+    return (
+        select(Track)
+        .join(PlaylistTrack, PlaylistTrack.track_id == Track.id)
+        .join(Playlist, Playlist.id == PlaylistTrack.playlist_id)
+        .where(Playlist.is_system == True)  # noqa: E712
+        .where(Track.file_id.isnot(None))
+        .where(~Track.file_id.startswith("lazy:"))
+        .where(~Track.file_id.startswith("pending:"))
+        .options(selectinload(Track.enrichment))
+        .distinct()
+        .order_by(Track.id)
+    )
+
+
 @router.get("/packs/base.zip")
 async def get_base_pack_zip(
     request: Request,
@@ -272,15 +291,7 @@ async def get_base_pack_zip(
     """
     sha1 = get_base_pack_sha1()
     if not BASE_PACK_FILENAME.exists() or not sha1:
-        stmt = (
-            select(Track)
-            .options(selectinload(Track.enrichment))
-            .where(Track.file_id.isnot(None))
-            .where(~Track.file_id.startswith("lazy:"))
-            .where(~Track.file_id.startswith("pending:"))
-            .order_by(Track.id)
-        )
-        tracks_db = (await db.execute(stmt)).scalars().all()
+        tracks_db = (await db.execute(_minecraft_tracks_stmt())).scalars().all()
         track_items = [
             {
                 "id": t.id,
@@ -322,16 +333,8 @@ async def get_sync_manifest(
     base_sha1 = get_base_pack_sha1()
     base_url = _pack_base_url(request)
 
-    # All tracks ready for playback
-    stmt = (
-        select(Track)
-        .options(selectinload(Track.enrichment))
-        .where(Track.file_id.isnot(None))
-        .where(~Track.file_id.startswith("lazy:"))
-        .where(~Track.file_id.startswith("pending:"))
-        .order_by(Track.id)
-    )
-    all_tracks = (await db.execute(stmt)).scalars().all()
+    # Only tracks in Minecraft playlists
+    all_tracks = (await db.execute(_minecraft_tracks_stmt())).scalars().all()
 
     # If base pack does not exist at all, build it right now so players get base pack immediately
     if (not BASE_PACK_FILENAME.exists() or not base_sha1) and all_tracks:
@@ -398,17 +401,9 @@ async def rebuild_base_pack_endpoint(
     Consolidate all tracks into the master Base Pack (Rollup/Rebase).
     Clears out deltas and updates base_pack.sha1.
     """
-    stmt = (
-        select(Track)
-        .options(selectinload(Track.enrichment))
-        .where(Track.file_id.isnot(None))
-        .where(~Track.file_id.startswith("lazy:"))
-        .where(~Track.file_id.startswith("pending:"))
-        .order_by(Track.id)
-    )
-    all_tracks = (await db.execute(stmt)).scalars().all()
+    all_tracks = (await db.execute(_minecraft_tracks_stmt())).scalars().all()
     if not all_tracks:
-        return {"status": "ok", "message": "No tracks in DB"}
+        return {"status": "ok", "message": "No Minecraft tracks in DB"}
 
     track_items = [
         {
