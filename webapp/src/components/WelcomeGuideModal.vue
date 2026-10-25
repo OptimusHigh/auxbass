@@ -17,7 +17,10 @@
             
             <div class="guide-header-actions">
               <span class="guide-step-counter">{{ stepIndex + 1 }} / {{ activeSteps.length }}</span>
-              <button class="guide-close-btn neu-btn-icon" @click="closeGuide" aria-label="Закрыть">
+              <button class="guide-minimize-btn neu-btn-icon" @click="minimizeGuide" title="Свернуть гайд" aria-label="Свернуть">
+                <Minus :size="16" />
+              </button>
+              <button class="guide-close-btn neu-btn-icon" @click="() => closeGuide(true)" title="Закрыть гайд" aria-label="Закрыть">
                 <X :size="18" />
               </button>
             </div>
@@ -134,6 +137,51 @@
         </div>
       </div>
     </Transition>
+
+    <!-- Floating Minimized Guide Dock -->
+    <Transition name="dock-pop">
+      <div 
+        v-if="isMinimized" 
+        class="guide-floating-dock neu-card"
+        @click="restoreGuide"
+      >
+        <div class="dock-pulse-led" :class="activeStep.themeClass"></div>
+        <div class="dock-icon-wrapper neu-convex">
+          <component :is="activeStep.navIcon" :size="14" class="dock-main-icon" />
+        </div>
+        <div class="dock-info">
+          <span class="dock-badge">{{ guideMode === 'minecraft' ? 'GanjaCraft' : 'Гайд' }}</span>
+          <span class="dock-step-name">{{ activeStep.shortTitle }} ({{ stepIndex + 1 }}/{{ activeSteps.length }})</span>
+        </div>
+        <div class="dock-controls" @click.stop>
+          <button 
+            class="dock-action-btn neu-btn-icon" 
+            @click="restoreGuide" 
+            title="Развернуть гайд"
+            aria-label="Развернуть"
+          >
+            <Maximize2 :size="13" />
+          </button>
+          <button 
+            v-if="stepIndex < activeSteps.length - 1"
+            class="dock-action-btn neu-btn-icon" 
+            @click="() => nextStep(activeSteps.length)" 
+            title="Следующий шаг"
+            aria-label="Далее"
+          >
+            <ChevronRight :size="14" />
+          </button>
+          <button 
+            class="dock-action-btn neu-btn-icon close" 
+            @click="() => closeGuide(true)" 
+            title="Закрыть гайд"
+            aria-label="Закрыть"
+          >
+            <X :size="13" />
+          </button>
+        </div>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -144,7 +192,7 @@ import {
   X, ChevronRight, ChevronLeft, Disc, Music, Sparkles, 
   Search, Radio, Headphones, Gamepad2, Send, 
   ArrowDownToLine, Zap, Check, ExternalLink, Settings, 
-  Layers, HardDrive 
+  Layers, HardDrive, Minus, Maximize2 
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { useWelcomeGuide } from '@/composables/useWelcomeGuide'
@@ -154,8 +202,11 @@ const authStore = useAuthStore()
 
 const {
   showModal,
+  isMinimized,
   guideMode,
   stepIndex,
+  minimizeGuide,
+  restoreGuide,
   closeGuide,
   setStep,
   nextStep,
@@ -393,28 +444,47 @@ const activeStep = computed(() => {
   return activeSteps.value[stepIndex.value] || activeSteps.value[0]
 })
 
+const navigateToSystemPlaylist = async () => {
+  try {
+    const { playlistsApi } = await import('@/api')
+    let sys = null
+    try {
+      const resp = await playlistsApi.getManageAll({ bypassCache: true })
+      const items = resp.data?.items || resp.data || []
+      sys = items.find(pl => pl.is_system || pl.name === '🎮 Minecraft Media' || pl.name?.toLowerCase().includes('minecraft'))
+    } catch {
+      // fallback
+    }
+    if (!sys) {
+      try {
+        const resp2 = await playlistsApi.getAll({ include_subscribed: false }, { bypassCache: true })
+        const items2 = resp2.data?.items || resp2.data || []
+        sys = items2.find(pl => pl.is_system || pl.name === '🎮 Minecraft Media' || pl.name?.toLowerCase().includes('minecraft'))
+      } catch {
+        // fallback
+      }
+    }
+    if (sys && sys.id) {
+      router.push(`/playlist/${sys.id}`)
+      return
+    }
+  } catch (e) {
+    console.warn('Could not locate system playlist:', e)
+  }
+  router.push('/library?tab=playlists')
+}
+
 const handleQuickAction = async (action) => {
-  closeGuide()
   if (!action) return
+
+  // Minimize the guide into floating dock so user doesn't lose context
+  minimizeGuide()
 
   if (action.type === 'route') {
     router.push(action.target)
   } else if (action.type === 'route_system_playlist') {
-    try {
-      const { playlistsApi } = await import('@/api')
-      const resp = await playlistsApi.getAll()
-      const items = resp.data?.items || resp.data || []
-      const sys = items.find(pl => pl.is_system)
-      if (sys) {
-        router.push(`/playlist/${sys.id}`)
-      } else {
-        router.push('/library?tab=playlists')
-      }
-    } catch {
-      router.push('/library')
-    }
+    await navigateToSystemPlaylist()
   } else if (action.type === 'bot') {
-    // Open Telegram Bot chat
     try {
       if (window.Telegram?.WebApp?.openTelegramLink) {
         window.Telegram.WebApp.openTelegramLink('https://t.me/GanjaCrafterBot')
@@ -429,20 +499,10 @@ const handleQuickAction = async (action) => {
 
 const handleFinish = async () => {
   const isMc = guideMode.value === 'minecraft'
-  closeGuide()
+  closeGuide(true)
   emit('finish', guideMode.value)
   if (isMc) {
-    try {
-      const { playlistsApi } = await import('@/api')
-      const resp = await playlistsApi.getAll()
-      const items = resp.data?.items || resp.data || []
-      const sys = items.find(pl => pl.is_system)
-      if (sys) {
-        router.push(`/playlist/${sys.id}`)
-      }
-    } catch {
-      // fallback
-    }
+    await navigateToSystemPlaylist()
   }
 }
 </script>
@@ -838,7 +898,173 @@ const handleFinish = async () => {
   box-shadow: 0 0 16px rgba(0, 188, 212, 0.4);
 }
 
+/* Floating Minimized Guide Dock */
+.guide-floating-dock {
+  position: fixed;
+  bottom: calc(var(--player-height, 64px) + env(safe-area-inset-bottom, 0px) + 14px);
+  right: 14px;
+  z-index: var(--z-modal, 1200);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--c-bg-2, #1A1A1A);
+  border-radius: var(--r-full, 9999px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.75),
+              0 0 16px var(--c-accent-glow, rgba(29, 185, 84, 0.25));
+  cursor: pointer;
+  user-select: none;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s ease,
+              border-color 0.2s ease;
+}
+
+.guide-floating-dock:hover {
+  transform: translateY(-2px);
+  border-color: rgba(29, 185, 84, 0.3);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.85),
+              0 0 22px var(--c-accent-glow, rgba(29, 185, 84, 0.35));
+}
+
+.guide-floating-dock:active {
+  transform: scale(0.97);
+}
+
+.dock-pulse-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1db954;
+  box-shadow: 0 0 8px #1db954;
+  animation: led-pulse 2s infinite ease-in-out;
+  flex-shrink: 0;
+}
+
+.dock-pulse-led.theme-cyan {
+  background: #00bcd4;
+  box-shadow: 0 0 8px #00bcd4;
+}
+
+.dock-pulse-led.theme-purple {
+  background: #b388ff;
+  box-shadow: 0 0 8px #b388ff;
+}
+
+.dock-pulse-led.theme-mc {
+  background: #1db954;
+  box-shadow: 0 0 10px rgba(29, 185, 84, 0.8);
+}
+
+.dock-icon-wrapper {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--c-bg-3, #222222);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  box-shadow: inset 1px 1px 2px rgba(255,255,255,0.06), 2px 2px 5px rgba(0,0,0,0.5);
+  flex-shrink: 0;
+}
+
+.dock-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.dock-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--c-accent, #1db954);
+}
+
+.dock-step-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #FFFFFF;
+  white-space: nowrap;
+}
+
+.dock-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.dock-action-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--c-bg-3, #222222);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--c-text-2, #B0B0B0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dock-action-btn:hover {
+  color: #FFFFFF;
+  background: var(--c-bg-4, #2A2A2A);
+  transform: scale(1.05);
+}
+
+.dock-action-btn:active {
+  transform: scale(0.92);
+  box-shadow: inset 1px 1px 3px rgba(0,0,0,0.6);
+}
+
+.dock-action-btn.close:hover {
+  color: #ff5252;
+}
+
+/* Minimize button in header */
+.guide-minimize-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--c-bg-2, #1A1A1A);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--c-text-2, #B0B0B0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 2px 2px 5px var(--sh-dark, rgba(0,0,0,0.5)), -1px -1px 3px var(--sh-light, rgba(255,255,255,0.03));
+}
+
+.guide-minimize-btn:hover {
+  color: #FFFFFF;
+  background: var(--c-bg-3, #222222);
+}
+
+.guide-minimize-btn:active {
+  transform: scale(0.94);
+  box-shadow: inset 2px 2px 4px rgba(0, 0, 0, 0.5);
+}
+
 /* Transitions */
+.dock-pop-enter-active,
+.dock-pop-leave-active {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dock-pop-enter-from,
+.dock-pop-leave-to {
+  opacity: 0;
+  transform: translateY(18px) scale(0.92);
+}
+
 .modal-fade-enter-active,
 .modal-fade-leave-active {
   transition: opacity 0.22s ease;

@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 
 const showModal = ref(false)
+const isMinimized = ref(false)
 const guideMode = ref('default') // 'minecraft' | 'default'
 const stepIndex = ref(0)
 
@@ -17,19 +18,35 @@ export function useWelcomeGuide() {
     }
   }
 
-  const openGuide = (mode = 'default') => {
+  const openGuide = (mode = 'default', step = null) => {
     guideMode.value = mode
-    stepIndex.value = 0
+    if (step !== null && step >= 0) {
+      stepIndex.value = step
+    }
+    isMinimized.value = false
     showModal.value = true
   }
 
-  const closeGuide = () => {
+  const minimizeGuide = () => {
+    isMinimized.value = true
     showModal.value = false
-    try {
-      const key = guideMode.value === 'minecraft' ? STORAGE_KEY_MINECRAFT : STORAGE_KEY_DEFAULT
-      localStorage.setItem(key, 'true')
-    } catch {
-      // ignore
+  }
+
+  const restoreGuide = () => {
+    isMinimized.value = false
+    showModal.value = true
+  }
+
+  const closeGuide = (markCompleted = true) => {
+    showModal.value = false
+    isMinimized.value = false
+    if (markCompleted) {
+      try {
+        const key = guideMode.value === 'minecraft' ? STORAGE_KEY_MINECRAFT : STORAGE_KEY_DEFAULT
+        localStorage.setItem(key, 'true')
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -37,11 +54,11 @@ export function useWelcomeGuide() {
     stepIndex.value = idx
   }
 
-  const nextStep = (maxSteps = 4) => {
+  const nextStep = (maxSteps = 5) => {
     if (stepIndex.value < maxSteps - 1) {
       stepIndex.value++
     } else {
-      closeGuide()
+      closeGuide(true)
     }
   }
 
@@ -53,13 +70,17 @@ export function useWelcomeGuide() {
 
   return {
     showModal,
+    isMinimized,
     guideMode,
     stepIndex,
     hasSeenGuide,
     openGuide,
+    minimizeGuide,
+    restoreGuide,
     closeGuide,
     setStep,
     nextStep,
     prevStep,
   }
 }
+
