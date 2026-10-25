@@ -179,11 +179,18 @@
               <span class="item-label">Установить приложение</span>
             </button>
 
-            <button class="profile-menu-item" @click="handleOpenGuide">
+            <button class="profile-menu-item" @click="handleOpenGuide('default')">
               <div class="item-icon-box">
-                <HelpCircle :size="18" />
+                <Headphones :size="18" />
               </div>
-              <span class="item-label">Гайды и помощь</span>
+              <span class="item-label">Гайд по плееру (Меломан)</span>
+            </button>
+
+            <button class="profile-menu-item" @click="handleOpenGuide('minecraft')">
+              <div class="item-icon-box">
+                <Disc :size="18" />
+              </div>
+              <span class="item-label">Гайд по Minecraft (Пластинки)</span>
             </button>
           </div>
 
@@ -225,6 +232,8 @@ import {
   AlertCircle,
   Maximize2,
   HelpCircle,
+  Headphones,
+  Disc,
   X
 } from 'lucide-vue-next'
 import { useWelcomeGuide } from '@/composables/useWelcomeGuide'
@@ -351,9 +360,8 @@ const handleInstallPwa = () => {
 }
 
 const welcomeGuide = useWelcomeGuide()
-const handleOpenGuide = () => {
+const handleOpenGuide = (mode = 'default') => {
   close()
-  const mode = authStore.user?.mc_rank ? 'minecraft' : 'default'
   welcomeGuide.openGuide(mode)
 }
 

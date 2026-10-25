@@ -897,12 +897,28 @@ onMounted(async () => {
   try {
     const rawParam = telegram?.initDataUnsafe?.start_param || ''
     const isMcParam = rawParam === 'minecraft_media' || rawParam === 'minecraft_media_guide' || window.location.search.includes('minecraft')
+    const isDefaultParam = rawParam === 'guide' || rawParam === 'meloman_guide' || window.location.search.includes('guide=default') || window.location.search.includes('meloman')
+
+    // Detect if user account was created or reset recently (within last 30 minutes)
+    let isFreshUser = false
+    if (authStore.user?.created_at) {
+      const createdMs = new Date(authStore.user.created_at).getTime()
+      if (!isNaN(createdMs) && (Date.now() - createdMs) < 30 * 60 * 1000) {
+        if (!sessionStorage.getItem('tg_fresh_guide_shown')) {
+          isFreshUser = true
+          sessionStorage.setItem('tg_fresh_guide_shown', 'true')
+        }
+      }
+    }
+
     if (isMcParam) {
-      if (rawParam === 'minecraft_media_guide' || !welcomeGuide.hasSeenGuide('minecraft')) {
+      if (rawParam === 'minecraft_media_guide' || isFreshUser || !welcomeGuide.hasSeenGuide('minecraft')) {
         setTimeout(() => welcomeGuide.openGuide('minecraft'), 500)
       }
-    } else if (!welcomeGuide.hasSeenGuide('default') && !window.location.search.includes('no_guide')) {
-      setTimeout(() => welcomeGuide.openGuide('default'), 900)
+    } else if (isDefaultParam || isFreshUser || !welcomeGuide.hasSeenGuide('default')) {
+      if (!window.location.search.includes('no_guide')) {
+        setTimeout(() => welcomeGuide.openGuide('default'), 800)
+      }
     }
   } catch (err) {
     console.warn('[App] Welcome guide init error:', err)
