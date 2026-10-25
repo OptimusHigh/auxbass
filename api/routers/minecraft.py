@@ -378,40 +378,24 @@ async def get_pack_zip(
         raise HTTPException(status_code=404, detail="Track file not ready")
 
     zpath = pack_filename(track_id)
-    sha1 = get_cached_sha1(track_id)
-
-    # If cached, serve directly
-    if zpath.exists() and sha1:
-        return FileResponse(
-            path=zpath,
-            media_type="application/zip",
-            filename=f"track_{track_id}.zip",
-            headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
-                "ETag": f'"{sha1}"',
-                "X-Pack-UUID": str(pack_uuid_for_track(track_id)),
-            },
-        )
-
-    # Build on-demand (may take a few seconds: download + ffmpeg)
+    cover_ref = _extract_cover_ref(track)
     result = await ensure_pack_for_track(
         track_id, track.file_id, 
         title=track.title or "", 
         duration=track.duration, 
-        cover_ref=_extract_cover_ref(track)
+        cover_ref=cover_ref
     )
     if not result:
         raise HTTPException(status_code=502, detail="Failed to build pack (download/transcode error)")
 
-    zip_bytes, new_sha1 = result
-    # Serve from disk (now cached)
+    _, sha1 = result
     return FileResponse(
         path=zpath,
         media_type="application/zip",
         filename=f"track_{track_id}.zip",
         headers={
             "Cache-Control": "public, max-age=31536000, immutable",
-            "ETag": f'"{new_sha1}"',
+            "ETag": f'"{sha1}"',
             "X-Pack-UUID": str(pack_uuid_for_track(track_id)),
         },
     )
