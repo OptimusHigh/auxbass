@@ -15,19 +15,41 @@ SYSTEM_PLAYLIST_DESCRIPTION = "Треки для проигрывателя в M
 
 
 async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playlist:
-    """Get or create the system playlist for a user. Idempotent."""
+    """Get or create the system playlist for a user. Idempotent and concurrency-safe."""
     result = await db.execute(
         select(Playlist).where(
             Playlist.owner_id == user_id,
             Playlist.is_system == True  # noqa: E712
-        )
+        ).order_by(Playlist.id.asc())
     )
-    pl = result.scalar_one_or_none()
-    if pl:
-        return pl
+    playlists = result.scalars().all()
+    if playlists:
+        primary = playlists[0]
+        if len(playlists) > 1:
+            for extra in playlists[1:]:
+                logger.warning(f"Cleaning duplicate system playlist {extra.id} for user {user_id}")
+                await db.delete(extra)
+            await db.commit()
+        return primary
+
+    # Also check by name as fallback
+    result_name = await db.execute(
+        select(Playlist).where(
+            Playlist.owner_id == user_id,
+            Playlist.name == SYSTEM_PLAYLIST_NAME
+        ).order_by(Playlist.id.asc())
+    )
+    playlists_name = result_name.scalars().all()
+    if playlists_name:
+        primary = playlists_name[0]
+        primary.is_system = True
+        if len(playlists_name) > 1:
+            for extra in playlists_name[1:]:
+                await db.delete(extra)
+        await db.commit()
+        return primary
 
     # Check if user exists, if not create minimal user (for ensure-user flow)
-    # Caller should have ensured user exists, but be defensive
     user = await db.get(User, user_id)
     if not user:
         user = User(id=user_id, first_name="Player")
@@ -42,9 +64,12 @@ async def get_or_create_system_playlist(user_id: int, db: AsyncSession) -> Playl
         is_system=True,
     )
     db.add(pl)
-    await db.flush()
-    await db.refresh(pl)
-    logger.info(f"Created system playlist {pl.id} for user {user_id}")
+    try:
+        await db.flush()
+        await db.refresh(pl)
+        logger.info(f"Created system playlist {pl.id} for user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to create system playlist for {user_id}: {e}")
     return pl
 
 

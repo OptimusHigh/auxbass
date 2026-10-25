@@ -896,8 +896,24 @@ onMounted(async () => {
   // Trigger onboarding guide if eligible
   try {
     const rawParam = telegram?.initDataUnsafe?.start_param || ''
-    const isMcParam = rawParam === 'minecraft_media' || rawParam === 'minecraft_media_guide' || window.location.search.includes('minecraft')
-    const isDefaultParam = rawParam === 'guide' || rawParam === 'meloman_guide' || window.location.search.includes('guide=default') || window.location.search.includes('meloman')
+    const urlParams = new URLSearchParams(window.location.search)
+    const urlStartApp = urlParams.get('startapp') || urlParams.get('tgWebAppStartParam') || ''
+    const effectiveParam = (rawParam || urlStartApp).toLowerCase().trim()
+
+    const isExplicitMc = 
+      effectiveParam === 'minecraft_media_guide' ||
+      effectiveParam === 'minecraft_media' || 
+      window.location.search.toLowerCase().includes('startapp=minecraft') ||
+      window.location.search.toLowerCase().includes('minecraft_media')
+
+    const isExplicitDefault = 
+      effectiveParam === 'guide' || 
+      effectiveParam === 'meloman_guide' || 
+      effectiveParam === 'default_guide' ||
+      urlParams.has('guide') ||
+      window.location.search.toLowerCase().includes('startapp=guide') ||
+      window.location.search.toLowerCase().includes('guide=1') ||
+      window.location.search.toLowerCase().includes('guide=default')
 
     // Detect if user account was created or reset recently (within last 30 minutes)
     let isFreshUser = false
@@ -911,14 +927,12 @@ onMounted(async () => {
       }
     }
 
-    if (isMcParam) {
-      if (rawParam === 'minecraft_media_guide' || isFreshUser || !welcomeGuide.hasSeenGuide('minecraft')) {
-        setTimeout(() => welcomeGuide.openGuide('minecraft'), 500)
-      }
-    } else if (isDefaultParam || isFreshUser || !welcomeGuide.hasSeenGuide('default')) {
-      if (!window.location.search.includes('no_guide')) {
-        setTimeout(() => welcomeGuide.openGuide('default'), 800)
-      }
+    if (isExplicitMc) {
+      setTimeout(() => welcomeGuide.openGuide('minecraft'), 300)
+    } else if (isExplicitDefault) {
+      setTimeout(() => welcomeGuide.openGuide('default'), 300)
+    } else if (isFreshUser || (!welcomeGuide.hasSeenGuide('default') && !window.location.search.includes('no_guide'))) {
+      setTimeout(() => welcomeGuide.openGuide('default'), 700)
     }
   } catch (err) {
     console.warn('[App] Welcome guide init error:', err)
