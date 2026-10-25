@@ -195,10 +195,15 @@ async def lifespan(app: FastAPI):
     
     # Start channel service queue worker for auto-forwarding liked tracks
     await start_channel_service()
+
+    # Start Minecraft Base Pack nightly rebuild scheduler (04:00)
+    from api.services.minecraft_pack import start_minecraft_pack_scheduler, stop_minecraft_pack_scheduler
+    start_minecraft_pack_scheduler()
     
     yield
     
     # Cleanup
+    stop_minecraft_pack_scheduler()
     await stop_channel_service()
     if api_bot:
         await api_bot.session.close()

@@ -17,7 +17,17 @@ from shared.config import get_settings
 from shared.database import get_db
 from shared.models import Playlist, PlaylistTrack, Track, User
 from api.services.minecraft_playlist import get_or_create_system_playlist, ensure_user_and_system_playlist
-from api.services.minecraft_pack import pack_uuid_for_track, get_cached_sha1, ensure_pack_for_track, pack_filename
+from api.services.minecraft_pack import (
+    pack_uuid_for_track,
+    get_cached_sha1,
+    ensure_pack_for_track,
+    pack_filename,
+    base_pack_uuid,
+    get_base_pack_meta,
+    get_base_pack_sha1,
+    build_base_pack,
+    BASE_PACK_FILENAME,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -250,6 +260,177 @@ async def get_pack_zip(
             "X-Pack-UUID": str(pack_uuid_for_track(track_id)),
         },
     )
+
+
+@router.get("/packs/base.zip")
+async def get_base_pack_zip(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Serve master Base Music Pack. If missing, automatically builds it from all available tracks.
+    """
+    sha1 = get_base_pack_sha1()
+    if not BASE_PACK_FILENAME.exists() or not sha1:
+        stmt = (
+            select(Track)
+            .options(selectinload(Track.enrichment))
+            .where(Track.file_id.isnot(None))
+            .where(~Track.file_id.startswith("lazy:"))
+            .where(~Track.file_id.startswith("pending:"))
+            .order_by(Track.id)
+        )
+        tracks_db = (await db.execute(stmt)).scalars().all()
+        track_items = [
+            {
+                "id": t.id,
+                "file_id": t.file_id,
+                "title": t.title or f"Track {t.id}",
+                "duration": t.duration,
+                "cover_ref": _extract_cover_ref(t),
+            }
+            for t in tracks_db
+        ]
+        res = await build_base_pack(track_items)
+        if not res:
+            raise HTTPException(status_code=503, detail="Base pack is empty or build failed")
+        _, sha1, _ = res
+
+    return FileResponse(
+        path=BASE_PACK_FILENAME,
+        media_type="application/zip",
+        filename="ganjacraft_base_music.zip",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": f'"{sha1}"',
+            "X-Pack-UUID": str(base_pack_uuid()),
+        },
+    )
+
+
+@router.get("/sync-manifest", dependencies=[Depends(verify_service_token)])
+async def get_sync_manifest(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns Base Pack metadata + list of Delta micro-packs (tracks not yet baked into Base Pack).
+    Used on JOIN to deliver 100% music content with minimal bandwidth.
+    """
+    base_meta = get_base_pack_meta()
+    base_track_ids = set(base_meta.get("track_ids", []))
+    base_sha1 = get_base_pack_sha1()
+    base_url = _pack_base_url(request)
+
+    # All tracks ready for playback
+    stmt = (
+        select(Track)
+        .options(selectinload(Track.enrichment))
+        .where(Track.file_id.isnot(None))
+        .where(~Track.file_id.startswith("lazy:"))
+        .where(~Track.file_id.startswith("pending:"))
+        .order_by(Track.id)
+    )
+    all_tracks = (await db.execute(stmt)).scalars().all()
+
+    # If base pack does not exist at all, build it right now so players get base pack immediately
+    if (not BASE_PACK_FILENAME.exists() or not base_sha1) and all_tracks:
+        track_items = [
+            {
+                "id": t.id,
+                "file_id": t.file_id,
+                "title": t.title or f"Track {t.id}",
+                "duration": t.duration,
+                "cover_ref": _extract_cover_ref(t),
+            }
+            for t in all_tracks
+        ]
+        res = await build_base_pack(track_items)
+        if res:
+            _, base_sha1, inc_ids = res
+            base_track_ids = set(inc_ids)
+
+    base_pack_info = None
+    if BASE_PACK_FILENAME.exists() and base_sha1:
+        base_pack_info = {
+            "uuid": str(base_pack_uuid()),
+            "url": f"{base_url}/api/minecraft/packs/base.zip",
+            "sha1": base_sha1,
+            "track_ids": list(base_track_ids),
+            "track_count": len(base_track_ids),
+        }
+
+    deltas = []
+    for tr in all_tracks:
+        if tr.id not in base_track_ids:
+            sha1 = get_cached_sha1(tr.id)
+            if not sha1:
+                import asyncio
+                asyncio.create_task(ensure_pack_for_track(
+                    tr.id, tr.file_id, tr.title or "",
+                    duration=tr.duration,
+                    cover_ref=_extract_cover_ref(tr)
+                ))
+            deltas.append({
+                "track_id": tr.id,
+                "title": tr.title or f"Track {tr.id}",
+                "artist": tr.artist,
+                "duration": tr.duration,
+                "file_id": tr.file_id,
+                "pack_uuid": str(pack_uuid_for_track(tr.id)),
+                "pack_url": f"{base_url}/api/minecraft/packs/{tr.id}.zip",
+                "sha1": sha1,
+            })
+
+    return {
+        "base_pack": base_pack_info,
+        "deltas": deltas,
+        "total_tracks": len(all_tracks),
+    }
+
+
+@router.post("/rebuild-base-pack", dependencies=[Depends(verify_service_token)])
+async def rebuild_base_pack_endpoint(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Consolidate all tracks into the master Base Pack (Rollup/Rebase).
+    Clears out deltas and updates base_pack.sha1.
+    """
+    stmt = (
+        select(Track)
+        .options(selectinload(Track.enrichment))
+        .where(Track.file_id.isnot(None))
+        .where(~Track.file_id.startswith("lazy:"))
+        .where(~Track.file_id.startswith("pending:"))
+        .order_by(Track.id)
+    )
+    all_tracks = (await db.execute(stmt)).scalars().all()
+    if not all_tracks:
+        return {"status": "ok", "message": "No tracks in DB"}
+
+    track_items = [
+        {
+            "id": t.id,
+            "file_id": t.file_id,
+            "title": t.title or f"Track {t.id}",
+            "duration": t.duration,
+            "cover_ref": _extract_cover_ref(t),
+        }
+        for t in all_tracks
+    ]
+    res = await build_base_pack(track_items)
+    if not res:
+        raise HTTPException(status_code=500, detail="Failed to rebuild base pack")
+    _, sha1, included = res
+    return {
+        "status": "ok",
+        "sha1": sha1,
+        "track_count": len(included),
+        "uuid": str(base_pack_uuid()),
+    }
+
 
 
 @router.get("/manifest", dependencies=[Depends(verify_service_token)])

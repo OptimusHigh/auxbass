@@ -12,6 +12,7 @@ import json
 import logging
 import uuid
 import zipfile
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -74,6 +75,43 @@ def _compute_sha1(data: bytes) -> str:
 
 # Global transcode semaphore to protect CPU from starvation
 _transcode_semaphore = asyncio.Semaphore(1)
+
+BASE_PACK_FILENAME = PACKS_DIR / "base_pack.zip"
+BASE_PACK_SHA1_PATH = PACKS_DIR / "base_pack.sha1"
+BASE_PACK_META_PATH = PACKS_DIR / "base_pack_meta.json"
+
+
+def base_pack_uuid() -> uuid.UUID:
+    """
+    Deterministic UUID matching Java's UUID.nameUUIDFromBytes("ganjacraft_base_music_pack".getBytes(StandardCharsets.UTF_8)).
+    """
+    data = b"ganjacraft_base_music_pack"
+    md5_bytes = bytearray(hashlib.md5(data).digest())
+    md5_bytes[6] = (md5_bytes[6] & 0x0f) | 0x30
+    md5_bytes[8] = (md5_bytes[8] & 0x3f) | 0x80
+    return uuid.UUID(bytes=bytes(md5_bytes))
+
+
+def get_base_pack_meta() -> dict:
+    if BASE_PACK_META_PATH.exists():
+        try:
+            return json.loads(BASE_PACK_META_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"track_ids": [], "built_at": 0, "sha1": ""}
+
+
+def get_base_pack_sha1() -> Optional[str]:
+    meta = get_base_pack_meta()
+    if meta.get("sha1"):
+        return meta["sha1"]
+    if BASE_PACK_SHA1_PATH.exists():
+        try:
+            return BASE_PACK_SHA1_PATH.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+    return None
+
 
 
 def generate_vinyl_texture(cover_bytes: Optional[bytes] = None) -> bytes:
@@ -512,3 +550,196 @@ def invalidate_pack(track_id: int):
                 p.unlink()
         except Exception:
             pass
+
+
+async def build_base_pack(track_items: list[dict]) -> Optional[tuple[bytes, str, list[int]]]:
+    """
+    Build unified Base Music Pack combining given tracks.
+    Each item in track_items has: id, file_id, title, duration, cover_ref.
+    Merges their micro-pack assets into a single zip with unified sounds.json.
+    """
+    if not track_items:
+        return None
+
+    # 1. Ensure all micro-packs are built
+    for item in track_items:
+        tr_id = item["id"]
+        zpath = pack_filename(tr_id)
+        if not zpath.exists() or not get_cached_sha1(tr_id):
+            file_id = item.get("file_id")
+            if file_id and not file_id.startswith("lazy:") and not file_id.startswith("pending:"):
+                try:
+                    await ensure_pack_for_track(
+                        tr_id,
+                        file_id,
+                        title=item.get("title") or f"Track {tr_id}",
+                        duration=item.get("duration"),
+                        cover_ref=item.get("cover_ref")
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to ensure pack for track {tr_id} while building base pack: {e}")
+
+    # 2. Build master zip
+    buf = io.BytesIO()
+    merged_sounds = {}
+    included_ids = []
+    first_icon = None
+
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as master_zip:
+        mcmeta = {
+            "pack": {
+                "pack_format": PACK_FORMAT_MAJOR,
+                "min_format": 48,
+                "max_format": PACK_FORMAT_MAJOR,
+                "description": "GanjaCraft Base Music Pack",
+            }
+        }
+        master_zip.writestr("pack.mcmeta", json.dumps(mcmeta, ensure_ascii=False))
+
+        for item in track_items:
+            tr_id = item["id"]
+            zpath = pack_filename(tr_id)
+            if not zpath.exists():
+                continue
+
+            try:
+                with zipfile.ZipFile(zpath, "r") as single_zip:
+                    for zinfo in single_zip.infolist():
+                        if zinfo.filename in ("pack.mcmeta", "assets/ganjacraft/sounds.json"):
+                            continue
+                        if zinfo.filename == "pack.png":
+                            if not first_icon:
+                                first_icon = single_zip.read(zinfo.filename)
+                            continue
+                        content = single_zip.read(zinfo.filename)
+                        master_zip.writestr(zinfo, content)
+
+                merged_sounds[f"track_{tr_id}"] = {
+                    "sounds": [{"name": f"ganjacraft:track_{tr_id}", "stream": True}],
+                    "subtitle": PACK_DESCRIPTION,
+                }
+                included_ids.append(tr_id)
+            except Exception as e:
+                logger.error(f"Error copying track {tr_id} into base pack: {e}")
+
+        if first_icon:
+            master_zip.writestr("pack.png", first_icon)
+
+        # Write unified sounds.json
+        master_zip.writestr("assets/ganjacraft/sounds.json", json.dumps(merged_sounds, ensure_ascii=False))
+
+    zip_bytes = buf.getvalue()
+    if not zip_bytes or not included_ids:
+        logger.error("Base pack build resulted in 0 tracks")
+        return None
+
+    sha1 = _compute_sha1(zip_bytes)
+
+    # Atomic write to disk
+    tmp_zip = BASE_PACK_FILENAME.with_suffix(".tmp.zip")
+    tmp_zip.write_bytes(zip_bytes)
+    tmp_zip.replace(BASE_PACK_FILENAME)
+    BASE_PACK_SHA1_PATH.write_text(sha1, encoding="utf-8")
+
+    meta = {
+        "track_ids": included_ids,
+        "built_at": int(time.time()),
+        "sha1": sha1,
+        "track_count": len(included_ids),
+    }
+    BASE_PACK_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(f"Successfully built Base Music Pack: {len(included_ids)} tracks, {len(zip_bytes)} bytes, sha1={sha1[:8]}")
+    return zip_bytes, sha1, included_ids
+
+
+def extract_cover_ref(tr) -> Optional[str]:
+    img_id = getattr(tr, "image_file_id", None)
+    if img_id:
+        return img_id
+    enr = tr.__dict__.get("enrichment")
+    if enr and getattr(enr, "cover_url", None):
+        return enr.cover_url
+    return None
+
+
+_scheduler_task: Optional[asyncio.Task] = None
+
+
+async def _nightly_rebuild_loop():
+    """Runs nightly check at 04:00 local time to rebuild Base Music Pack if new tracks exist."""
+    import datetime
+    while True:
+        try:
+            now = datetime.datetime.now()
+            # Calculate next 04:00
+            target = now.replace(hour=4, minute=0, second=0, microsecond=0)
+            if target <= now:
+                target += datetime.timedelta(days=1)
+            delay = (target - now).total_seconds()
+            logger.info(f"[MinecraftPack] Next nightly Base Pack check scheduled in {delay/3600:.2f}h (at {target.strftime('%Y-%m-%d %H:%M:%S')})")
+            await asyncio.sleep(delay)
+
+            logger.info("[MinecraftPack] Running scheduled nightly Base Pack consolidation (04:00)...")
+            from shared.database import async_session
+            from shared.models import Track
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            async with async_session() as db:
+                meta = get_base_pack_meta()
+                base_track_ids = set(meta.get("track_ids", []))
+                stmt = (
+                    select(Track)
+                    .options(selectinload(Track.enrichment))
+                    .where(Track.file_id.isnot(None))
+                    .where(~Track.file_id.startswith("lazy:"))
+                    .where(~Track.file_id.startswith("pending:"))
+                    .order_by(Track.id)
+                )
+                all_tracks = (await db.execute(stmt)).scalars().all()
+                new_tracks = [t for t in all_tracks if t.id not in base_track_ids]
+
+                if not new_tracks and BASE_PACK_FILENAME.exists() and get_base_pack_sha1():
+                    logger.info("[MinecraftPack] Nightly check: 0 new tracks, Base Pack is already up to date.")
+                    continue
+
+                logger.info(f"[MinecraftPack] Nightly check: consolidating {len(new_tracks)} new tracks ({len(all_tracks)} total) into Base Pack...")
+                track_items = [
+                    {
+                        "id": t.id,
+                        "file_id": t.file_id,
+                        "title": t.title or f"Track {t.id}",
+                        "duration": t.duration,
+                        "cover_ref": extract_cover_ref(t),
+                    }
+                    for t in all_tracks
+                ]
+                res = await build_base_pack(track_items)
+                if res:
+                    _, new_sha1, inc = res
+                    logger.info(f"[MinecraftPack] Nightly Base Pack rebuild complete: {len(inc)} tracks, sha1={new_sha1[:8]}")
+                else:
+                    logger.warning("[MinecraftPack] Nightly Base Pack rebuild failed.")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"[MinecraftPack] Error in nightly rebuild loop: {e}")
+            await asyncio.sleep(300)
+
+
+def start_minecraft_pack_scheduler():
+    global _scheduler_task
+    if _scheduler_task is None or _scheduler_task.done():
+        _scheduler_task = asyncio.create_task(_nightly_rebuild_loop())
+        logger.info("[MinecraftPack] Nightly 04:00 Base Pack scheduler task started.")
+
+
+def stop_minecraft_pack_scheduler():
+    global _scheduler_task
+    if _scheduler_task and not _scheduler_task.done():
+        _scheduler_task.cancel()
+        _scheduler_task = None
+        logger.info("[MinecraftPack] Nightly Base Pack scheduler task stopped.")
+
+
