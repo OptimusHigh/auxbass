@@ -3,14 +3,20 @@
     <div class="modal edit-playlist-modal">
       <!-- Header -->
       <div class="edit-header">
-        <h2>Редактирование</h2>
+        <div class="edit-header-title">
+          <h2>Редактирование</h2>
+          <span v-if="isSystem" class="system-badge-pill" title="Системный плейлист Minecraft">
+            <Lock :size="11" />
+            <span>Системный</span>
+          </span>
+        </div>
         <button class="close-modal-btn" @click="$emit('close')"><X :size="20" /></button>
       </div>
       
       <!-- Playlist cover, name and settings -->
       <div class="edit-settings">
         <div class="cover-uploader">
-          <div class="cover-preview-box">
+          <div class="cover-preview-box" :class="{ 'is-locked-box': isSystem }">
             <img v-if="currentCoverUrl" :src="currentCoverUrl" alt="Cover" class="cover-preview-img" />
             <div v-else class="cover-placeholder-box">
               <ImageIcon :size="22" />
@@ -18,8 +24,14 @@
             <div v-if="coverLoading" class="cover-spinner-overlay">
               <div class="search-spinner-inline"></div>
             </div>
+            <div v-if="isSystem" class="cover-lock-watermark" title="Обложка защищена и формируется автоматически">
+              <Lock :size="13" />
+            </div>
           </div>
-          <div class="cover-action-buttons">
+          <div v-if="isSystem" class="cover-system-badge" title="Обложка защищена">
+            <span>Обложка</span>
+          </div>
+          <div v-else class="cover-action-buttons">
             <button type="button" class="cover-btn upload" @click="triggerFileInput" :disabled="coverLoading" title="Загрузить обложку">
               <Upload :size="13" />
               <span>{{ customCoverUrl ? 'Заменить' : 'Обложка' }}</span>
@@ -38,17 +50,27 @@
         </div>
 
         <div class="edit-details">
-          <input
-            v-model="name"
-            type="text"
-            placeholder="Название плейлиста"
-            class="edit-name-input"
-          />
+          <div class="edit-name-wrapper" :class="{ 'is-locked': isSystem }">
+            <input
+              v-model="name"
+              type="text"
+              placeholder="Название плейлиста"
+              class="edit-name-input"
+              :disabled="isSystem"
+              :title="isSystem ? 'Имя системного плейлиста нельзя изменить' : ''"
+            />
+            <span v-if="isSystem" class="name-lock-badge" title="Имя защищено от изменений">
+              <Lock :size="14" />
+            </span>
+          </div>
           <div class="edit-options">
             <label class="checkbox-label compact">
               <input type="checkbox" v-model="isPublic" />
               <span>Публичный</span>
             </label>
+            <span v-if="isSystem" class="system-field-hint">
+              Аватар и имя зафиксированы
+            </span>
           </div>
         </div>
       </div>
@@ -129,8 +151,13 @@
       </div>
       
       <!-- Footer -->
-      <div class="edit-footer">
+      <div class="edit-footer" :class="{ 'is-system-footer': isSystem }">
+        <div v-if="isSystem" class="system-footer-note">
+          <Lock :size="13" />
+          <span>Системный плейлист</span>
+        </div>
         <button 
+          v-else
           class="delete-playlist-btn" 
           :class="{ 'confirm-state': deleteConfirmPending }"
           @click="handleDeleteClick"
@@ -143,7 +170,7 @@
         <button 
           class="save-btn" 
           @click="save"
-          :disabled="!name.trim() || saving"
+          :disabled="(!name.trim() && !isSystem) || saving"
         >
           <span v-if="saving">Сохранение...</span>
           <span v-else>Сохранить</span>
@@ -166,7 +193,7 @@ import TrackSearchItem from './TrackSearchItem.vue'
 import EditableTrackItem from './EditableTrackItem.vue'
 import TrackSkeleton from './TrackSkeleton.vue'
 import SearchBar from './ui/SearchBar.vue'
-import { X, Music, Upload, Trash2, Search, Image as ImageIcon } from 'lucide-vue-next'
+import { X, Music, Upload, Trash2, Search, Image as ImageIcon, Lock } from 'lucide-vue-next'
 import { getCoverUrl, CoverSize } from '@/utils'
 import { useAuthStore } from '@/stores/auth'
 import { useUIStore } from '@/stores/ui'
@@ -188,6 +215,8 @@ const name = ref('')
 const isPublic = ref(false)
 const tracks = ref([])
 const saving = ref(false)
+
+const isSystem = computed(() => Boolean(props.playlist?.is_system || props.playlist?.system_type === 'minecraft' || props.playlist?.system_type === 'minecraft_main'))
 
 const scrollContentRef = ref(null)
 
@@ -331,10 +360,12 @@ const currentCoverUrl = computed(() => {
 })
 
 const triggerFileInput = () => {
+  if (isSystem.value) return
   fileInputRef.value?.click()
 }
 
 const handleCoverFileChange = async (e) => {
+  if (isSystem.value) return
   const file = e.target.files?.[0]
   if (!file) return
   if (!file.type.startsWith('image/')) {
@@ -357,6 +388,7 @@ const handleCoverFileChange = async (e) => {
 }
 
 const removeCover = async () => {
+  if (isSystem.value) return
   coverLoading.value = true
   try {
     await playlistsApi.deleteCover(props.playlist.id)
@@ -450,20 +482,27 @@ const removeTrackFromList = async (track, index) => {
 
 // Save
 const save = async () => {
-  if (!name.value.trim() || saving.value) return
+  const targetName = isSystem.value ? (props.playlist?.name || name.value.trim()) : name.value.trim()
+  if (!targetName || saving.value) return
   saving.value = true
   try {
-    const response = await libraryStore.updatePlaylist(props.playlist.id, {
-      name: name.value.trim(),
+    const payload = {
       is_public: isPublic.value
-    })
+    }
+    if (!isSystem.value) {
+      payload.name = targetName
+    } else {
+      payload.name = props.playlist?.name || targetName
+    }
+
+    const response = await libraryStore.updatePlaylist(props.playlist.id, payload)
 
     if (tracks.value.length > 0) {
       await playlistsApi.reorder(props.playlist.id, tracks.value.map(t => t.id))
     }
     
     emit('save', { 
-      name: name.value.trim(), 
+      name: payload.name, 
       isPublic: isPublic.value, 
       covers: response?.covers || [],
       customCoverUrl: customCoverUrl.value,
@@ -556,10 +595,23 @@ const save = async () => {
   border-bottom: 1px solid var(--c-bg-4);
 }
 
-.edit-header h2 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--c-text-1);
+.edit-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.system-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: rgba(29, 185, 84, 0.12);
+  color: var(--c-accent);
+  border: 1px solid rgba(29, 185, 84, 0.25);
 }
 
 .close-modal-btn {
@@ -663,11 +715,44 @@ const save = async () => {
   display: none;
 }
 
+.cover-preview-box.is-locked-box {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.cover-lock-watermark {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(13, 13, 13, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-accent);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cover-system-badge {
+  font-size: 11px;
+  color: var(--c-text-3);
+  font-weight: 500;
+  text-align: center;
+}
+
 .edit-details {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.edit-name-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
 }
 
 .edit-name-input {
@@ -678,6 +763,33 @@ const save = async () => {
   border-radius: 8px;
   color: var(--c-text-1);
   font-size: 15px;
+  transition: all 0.2s ease;
+}
+
+.edit-name-wrapper.is-locked .edit-name-input {
+  padding-right: 36px;
+  background: var(--c-bg-1);
+  opacity: 0.85;
+  border-color: rgba(255, 255, 255, 0.04);
+  color: var(--c-text-2);
+  cursor: not-allowed;
+  box-shadow: inset 2px 2px 4px var(--sh-inset-dark, rgba(0,0,0,0.5)), inset -1px -1px 2px var(--sh-inset-light, rgba(255,255,255,0.03));
+}
+
+.name-lock-badge {
+  position: absolute;
+  right: 12px;
+  color: var(--c-text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.system-field-hint {
+  font-size: 12px;
+  color: var(--c-text-3);
+  margin-left: auto;
 }
 
 .edit-name-input:focus {
@@ -808,8 +920,16 @@ const save = async () => {
   justify-content: space-between;
   gap: 12px;
   padding: 16px 20px;
-  border-top: 1px solid var(--c-bg-4));
+  border-top: 1px solid var(--c-bg-4);
   background: var(--c-bg-3);
+}
+
+.system-footer-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--c-text-3);
 }
 
 .delete-playlist-btn {
@@ -854,6 +974,7 @@ const save = async () => {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
+  margin-left: auto;
 }
 
 .save-btn:disabled {

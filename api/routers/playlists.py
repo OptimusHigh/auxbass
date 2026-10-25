@@ -795,6 +795,8 @@ async def update_playlist(
     
     if getattr(playlist, "is_system", False) and data.name and data.name != playlist.name:
         raise HTTPException(status_code=403, detail="Cannot rename system playlist")
+    if getattr(playlist, "is_system", False) and data.custom_cover_url is not None and data.custom_cover_url != playlist.custom_cover_url:
+        raise HTTPException(status_code=403, detail="Cannot change cover of system playlist")
     if data.name:
         playlist.name = data.name
     if data.description is not None:
@@ -849,6 +851,9 @@ async def upload_playlist_cover(
             raise HTTPException(status_code=403, detail="Только администратор может изменять главный серверный плейлист")
     elif playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
+    
+    if getattr(playlist, "is_system", False):
+        raise HTTPException(status_code=403, detail="Нельзя менять обложку системного плейлиста")
     
     content_type = file.content_type or ""
     if not content_type.startswith("image/"):
@@ -946,7 +951,7 @@ async def delete_playlist_cover(
     if not playlist or playlist.owner_id != user.id:
         raise HTTPException(status_code=404, detail="Playlist not found")
     if getattr(playlist, "is_system", False):
-        raise HTTPException(status_code=403, detail="Cannot delete system playlist")
+        raise HTTPException(status_code=403, detail="Нельзя изменять обложку системного плейлиста")
         
     if playlist.custom_cover_url and playlist.custom_cover_url.startswith("/api/covers/"):
         old_path = _safe_cover_path(playlist.custom_cover_url)

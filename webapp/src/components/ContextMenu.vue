@@ -255,8 +255,8 @@
                     <ChevronRight :size="16" class="submenu-arrow" />
                   </button>
 
-                  <!-- Only for user playlists that user owns -->
-                  <template v-if="isPlaylistOwner">
+                  <!-- Only for user playlists that user owns (non-system) -->
+                  <template v-if="isPlaylistOwner && !menuData?.is_system && menuData?.system_type !== 'minecraft' && menuData?.system_type !== 'minecraft_main'">
                     <div class="menu-divider" />
                     <button class="menu-item" @mouseenter="handleRegularItemMouseEnter" @click="exec('rename')">
                       <Pencil :size="18" />

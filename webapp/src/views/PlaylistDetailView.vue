@@ -354,12 +354,13 @@ const loadQuota = async (telegramId) => {
 
 // Edit modal handlers
 const openEditModal = () => {
-  if (playlist.value?.is_system) { uiStore.toast.error('Zaschischeno', 'Sistemnyy playlist nelzya pereimenovat'); return }
   showEditModal.value = true
 }
 
 const handleSavePlaylist = async ({ name, isPublic, covers, tracks: savedTracks }) => {
-  playlist.value.name = name
+  if (!playlist.value?.is_system) {
+    playlist.value.name = name
+  }
   playlist.value.is_public = isPublic
   if (savedTracks) {
     playlist.value.tracks = savedTracks
