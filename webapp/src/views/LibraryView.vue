@@ -821,11 +821,29 @@ onUnmounted(() => {
   min-height: 40px;
   padding-right: var(--content-padding, 16px);
   box-sizing: border-box;
+  /* ─── STICKY HEADER FIX ─── */
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 20);
+  /* Compensate for parent padding so sticky backdrop covers edge-to-edge */
+  margin-left: calc(-1 * var(--content-padding, 16px));
+  padding-left: var(--content-padding, 16px);
+  padding-top: 10px;
+  padding-bottom: 10px;
+  background: rgba(18, 18, 18, 0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  /* Width override: margin-left negative + explicit width to compensate */
+  width: calc(100% + var(--content-padding, 16px));
 }
 
 @media (min-width: 768px) {
   .library-persistent-nav {
+    margin-left: calc(-1 * var(--content-padding, 24px));
+    padding-left: var(--content-padding, 24px);
     padding-right: var(--content-padding, 24px);
+    width: calc(100% + var(--content-padding, 24px));
   }
 }
 

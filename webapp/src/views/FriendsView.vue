@@ -764,7 +764,9 @@ const handleResetState = (event) => {
     -2px -2px 6px var(--sh-light);
   margin-bottom: 22px;
   cursor: pointer;
-  overflow: hidden;
+  /* overflow: hidden REMOVED — was clipping box-shadow and hub-ambient-glow */
+  /* Ambient glow child is absolutely positioned; use border-radius for visual clip */
+  isolation: isolate;
   transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -791,6 +793,8 @@ const handleResetState = (event) => {
   background: radial-gradient(circle, rgba(34, 197, 94, 0.22) 0%, transparent 70%);
   pointer-events: none;
   filter: blur(20px);
+  /* Prevent glow from protruding beyond card corners via parent isolation+border-radius */
+  border-radius: inherit;
 }
 
 .hub-user-main {
@@ -995,6 +999,9 @@ const handleResetState = (event) => {
    ══════════════════════════════════════════════ */
 .friends-tabs {
   margin-bottom: 20px;
+  /* Extra vertical padding: prevents glow on active .neu-tab from being clipped by overflow-x scroll */
+  padding: 8px 2px;
+  margin-top: -8px;
 }
 
 .tab-badge {

@@ -7,10 +7,15 @@
 .quick-grid {
   display: flex;
   gap: 8px;
+  /* Padding protects box-shadow of .quick-item from being clipped by scroll container */
   padding: 8px 12px;
+  margin: -8px -12px;
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  /* Trailing fade: last item doesn't hard-cut at screen edge */
+  mask-image: linear-gradient(to right, black 80%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 80%, transparent 100%);
 }
 
 .quick-grid::-webkit-scrollbar { display: none; }
@@ -90,11 +95,16 @@
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding: 4px 12px;
+  /* Vertical padding: protects neumorphic box-shadow from clip by overflow container */
+  padding: 8px 12px 10px;
+  margin: -8px -12px -10px;
+  /* Trailing fade so last card doesn't hard-cut at viewport right edge */
+  mask-image: linear-gradient(to right, black 88%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 88%, transparent 100%);
 }
 
 .horizontal-scroll::-webkit-scrollbar { display: none; }
-.horizontal-scroll::after { content: ''; flex-shrink: 0; width: 4px; }
+.horizontal-scroll::after { content: ''; flex-shrink: 0; width: 12px; }
 .scroll-spacer { display: none; }
 
 /* ─── Feed Cards (neumorphic) ─── */

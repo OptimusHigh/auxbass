@@ -468,6 +468,8 @@ onMounted(() => {
 .scope-toggle {
   display: inline-flex;
   align-items: center;
+  /* flex-shrink: 0 prevents the toggle from squishing on narrow headers */
+  flex-shrink: 0;
   background: var(--c-bg-0, #0D0D0D);
   padding: 3px;
   border-radius: 20px;
@@ -481,15 +483,20 @@ onMounted(() => {
 .scope-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   background: transparent;
   border: none;
   color: var(--c-text-3, rgba(255, 255, 255, 0.6));
   font-size: 12px;
   font-weight: 600;
-  padding: 6px 14px;
+  /* Fixed height + nowrap: prevents text from wrapping, keeps container height stable */
+  height: 30px;
+  padding: 0 12px;
   border-radius: 16px;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   font-family: inherit;
   user-select: none;
@@ -508,14 +515,25 @@ onMounted(() => {
   font-weight: 700;
 }
 
-/* Mood Pills Row */
+/* Mood Pills Row — horizontal scroll with shadow protection padding */
 .mood-pills-row {
   display: flex;
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
+  /* Top/side padding ensures box-shadow on pills is not clipped by scroll container */
+  padding: 8px 2px 14px;
+  margin: -8px -2px -14px;
+  /* Fade mask on trailing edge so pills don't hard-cut at viewport right */
+  mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  margin-bottom: 0;
+}
+
+.mood-pills-row::after {
+  content: '';
+  flex-shrink: 0;
+  width: 16px; /* ensures last pill is visible before mask kicks in */
 }
 
 .mood-pills-row::-webkit-scrollbar {
@@ -598,7 +616,7 @@ onMounted(() => {
   }
 }
 
-/* Genre Card (Spotify Browse Style) */
+/* Genre Card — Neumorphic standard (convex elevated surface) */
 .genre-card {
   height: 125px;
   border-radius: 12px;
@@ -606,8 +624,12 @@ onMounted(() => {
   position: relative;
   overflow: hidden;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* Replaced flat shadow with neumorphic dual-shadow + glass contour */
+  box-shadow: 
+    5px 5px 14px rgba(0, 0, 0, 0.65),
+    -2px -2px 6px rgba(255, 255, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.2s ease;
   user-select: none;
   display: flex;
@@ -616,17 +638,28 @@ onMounted(() => {
 }
 
 .genre-card.is-active-genre {
-  border-color: rgba(29, 185, 84, 0.7);
-  box-shadow: 0 0 16px rgba(29, 185, 84, 0.35), 0 6px 20px rgba(0, 0, 0, 0.5);
+  border-color: rgba(29, 185, 84, 0.55);
+  box-shadow: 
+    5px 5px 14px rgba(0, 0, 0, 0.65),
+    -2px -2px 6px rgba(255, 255, 255, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 18px rgba(29, 185, 84, 0.4);
 }
 
 .genre-card:hover {
   transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 
+    8px 8px 20px rgba(0, 0, 0, 0.7),
+    -3px -3px 8px rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .genre-card:active {
   transform: scale(0.98);
+  box-shadow: 
+    2px 2px 8px rgba(0, 0, 0, 0.7),
+    inset 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .genre-info {

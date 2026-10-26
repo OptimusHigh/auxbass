@@ -741,11 +741,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0;
+  /* padding allows box-shadow/glow of child tabs to render without clipping */
+  padding: 6px 4px;
   background: transparent;
   overflow-x: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  /* negative margin compensates vertical padding so layout doesn't shift */
+  margin: -6px 0;
 }
 
 .neu-tab-bar::-webkit-scrollbar {
