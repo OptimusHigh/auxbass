@@ -7,15 +7,18 @@
 .quick-grid {
   display: flex;
   gap: 8px;
-  /* Padding protects box-shadow of .quick-item from being clipped by scroll container */
-  padding: 8px 12px;
-  margin: -8px -12px;
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  /* Trailing fade: last item doesn't hard-cut at screen edge */
-  mask-image: linear-gradient(to right, black 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, black 80%, transparent 100%);
+  scroll-padding-inline: 4px;
+  /* Vertical padding protects box-shadow without shifting horizontal start */
+  padding-block: 10px;
+  margin-block: -10px;
+  padding-inline: 2px;
+  margin-inline: 0;
+  /* Trailing fade: mask ONLY on the right edge */
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
 }
 
 .quick-grid::-webkit-scrollbar { display: none; }
@@ -95,12 +98,15 @@
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  /* Vertical padding: protects neumorphic box-shadow from clip by overflow container */
-  padding: 8px 12px 10px;
-  margin: -8px -12px -10px;
-  /* Trailing fade so last card doesn't hard-cut at viewport right edge */
-  mask-image: linear-gradient(to right, black 88%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, black 88%, transparent 100%);
+  scroll-padding-inline: 4px;
+  /* Vertical padding: protects neumorphic box-shadow without horizontal shift */
+  padding-block: 10px;
+  margin-block: -10px;
+  padding-inline: 2px;
+  margin-inline: 0;
+  /* Trailing fade: mask ONLY on the right edge */
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
 }
 
 .horizontal-scroll::-webkit-scrollbar { display: none; }

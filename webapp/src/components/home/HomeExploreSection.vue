@@ -521,12 +521,14 @@ onMounted(() => {
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
-  /* Top/side padding ensures box-shadow on pills is not clipped by scroll container */
-  padding: 8px 2px 14px;
-  margin: -8px -2px -14px;
-  /* Fade mask on trailing edge so pills don't hard-cut at viewport right */
-  mask-image: linear-gradient(to right, black 85%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+  scroll-padding-inline: 4px;
+  padding-block: 10px;
+  margin-block: -10px;
+  padding-inline: 2px;
+  margin-inline: 0;
+  /* Trailing fade: mask ONLY on the right edge */
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
   margin-bottom: 0;
 }
 

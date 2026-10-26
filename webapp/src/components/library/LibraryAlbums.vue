@@ -267,13 +267,34 @@ defineExpose({
 }
 
 .library-toolbar {
+  position: sticky;
+  top: var(--library-nav-height, 58px);
+  z-index: 25;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
   gap: 12px;
   min-height: 40px;
-  width: 100%;
+  padding: 12px 16px;
+  margin-inline: -16px;
+  margin-bottom: 14px;
+  background: rgba(14, 16, 16, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+@media (min-width: 768px) {
+  .library-toolbar {
+    padding: 12px 24px;
+    margin-inline: -24px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .library-toolbar {
+    top: 0;
+  }
 }
 
 .library-toolbar.search-active {

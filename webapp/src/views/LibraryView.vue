@@ -799,7 +799,8 @@ onUnmounted(() => {
 
 <style scoped>
 .library-view {
-  padding: var(--content-padding, 16px) 0 32px var(--content-padding, 16px);
+  --library-nav-height: 58px;
+  padding: 0 0 32px var(--content-padding, 16px);
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -807,7 +808,13 @@ onUnmounted(() => {
 
 @media (min-width: 768px) {
   .library-view {
-    padding: var(--content-padding, 24px) 0 32px var(--content-padding, 24px);
+    padding: 0 0 32px var(--content-padding, 24px);
+  }
+}
+
+@media (min-width: 1024px) {
+  .library-view {
+    --library-nav-height: 0px;
   }
 }
 
@@ -817,24 +824,22 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 20px;
   min-height: 40px;
   padding-right: var(--content-padding, 16px);
   box-sizing: border-box;
-  /* ─── STICKY HEADER FIX ─── */
+  /* ─── STICKY HEADER FIX: flush to ceiling without parent padding gap ─── */
   position: sticky;
   top: 0;
-  z-index: var(--z-sticky, 20);
-  /* Compensate for parent padding so sticky backdrop covers edge-to-edge */
+  z-index: 26;
   margin-left: calc(-1 * var(--content-padding, 16px));
   padding-left: var(--content-padding, 16px);
-  padding-top: 10px;
+  padding-top: 14px;
   padding-bottom: 10px;
-  background: rgba(18, 18, 18, 0.88);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  /* Width override: margin-left negative + explicit width to compensate */
+  margin-bottom: 16px;
+  background: rgba(14, 16, 16, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   width: calc(100% + var(--content-padding, 16px));
 }
 
@@ -847,6 +852,20 @@ onUnmounted(() => {
   }
 }
 
+@media (min-width: 1024px) {
+  .library-persistent-nav {
+    position: relative;
+    top: auto;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-bottom: none;
+    padding-top: 16px;
+    padding-bottom: 12px;
+    margin-bottom: 12px;
+  }
+}
+
 .library-persistent-nav.search-active {
   justify-content: stretch;
 }
@@ -856,17 +875,30 @@ onUnmounted(() => {
 }
 
 .library-tabs-pills {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 2px 0;
   -webkit-overflow-scrolling: touch;
+  scroll-padding-inline: 4px;
+  padding-block: 6px;
+  margin-block: -6px;
+  padding-inline: 2px 12px;
+  margin-inline: 0;
+  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
 }
 
 .library-tabs-pills::-webkit-scrollbar {
   display: none;
+}
+
+.library-persistent-nav :deep(.expandable-search-container) {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 @media (min-width: 1024px) {
@@ -882,6 +914,8 @@ onUnmounted(() => {
     color: var(--c-text-1, #fff);
     margin: 0;
     line-height: 1.2;
+    padding-top: 8px;
+    margin-bottom: 8px;
   }
 
   .subtab-header {
@@ -958,6 +992,38 @@ onUnmounted(() => {
   .tracks-overview-section,
   .library-content {
     padding-right: var(--content-padding, 24px);
+  }
+}
+
+/* ─── Controls Bar Sticky Coordination ─── */
+:deep(.library-toolbar) {
+  position: sticky;
+  top: var(--library-nav-height, 58px);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 12px 16px;
+  margin-inline: -16px;
+  margin-bottom: 14px;
+  background: rgba(14, 16, 16, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+@media (min-width: 768px) {
+  :deep(.library-toolbar) {
+    padding: 12px 24px;
+    margin-inline: -24px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :deep(.library-toolbar) {
+    top: 0;
   }
 }
 
