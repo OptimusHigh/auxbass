@@ -44,7 +44,8 @@ export function useVirtualScroll(options = {}) {
   // Map of loaded items: index -> item
   const itemsMap = shallowRef(new Map())
   const loadedPages = new Set()
-  const pendingPages = new Set()
+  // Map of in-flight pages: pageOffset -> AbortController
+  const pendingPages = new Map()
 
   // Scroll tracking state
   const containerRef = ref(null)
@@ -58,6 +59,9 @@ export function useVirtualScroll(options = {}) {
   let detectedScrollContainer = null
   let ticking = false
   let resizeObserver = null
+  let dwellTimer = null
+  let lastScrollTop = 0
+  let lastScrollTime = 0
 
   // Helpers
   const findScrollContainer = (el) => {
@@ -187,12 +191,29 @@ export function useVirtualScroll(options = {}) {
     itemsMap.value = updated
   }
 
-  // Fetch a specific page/chunk by offset
+  // Cancel all pending page requests
+  const abortAllPending = () => {
+    for (const controller of pendingPages.values()) {
+      try {
+        controller.abort()
+      } catch (e) {
+        // Ignore abort errors
+      }
+    }
+    pendingPages.clear()
+    if (dwellTimer) {
+      clearTimeout(dwellTimer)
+      dwellTimer = null
+    }
+  }
+
+  // Fetch a specific page/chunk by offset with AbortSignal
   const fetchPage = async (pageOffset) => {
     if (loadedPages.has(pageOffset) || pendingPages.has(pageOffset)) return
     if (!fetchFn) return
 
-    pendingPages.add(pageOffset)
+    const controller = new AbortController()
+    pendingPages.set(pageOffset, controller)
 
     if (pageOffset === 0 && !initialized.value) {
       loading.value = true
@@ -204,6 +225,7 @@ export function useVirtualScroll(options = {}) {
       const result = await fetchFn({
         offset: pageOffset,
         limit: pageSize,
+        signal: controller.signal,
         ...extraParams.value
       })
 
@@ -223,25 +245,45 @@ export function useVirtualScroll(options = {}) {
         evictDistantPages()
       }
     } catch (err) {
-      error.value = err
-      console.error(`[useVirtualScroll] Error fetching offset ${pageOffset}:`, err)
+      const isCanceled = err?.name === 'AbortError' || err?.code === 'ERR_CANCELED' || (err?.message && String(err.message).toLowerCase().includes('canceled'))
+      if (!isCanceled) {
+        error.value = err
+        console.error(`[useVirtualScroll] Error fetching offset ${pageOffset}:`, err)
+      }
     } finally {
       pendingPages.delete(pageOffset)
       loading.value = false
       loadingMore.value = pendingPages.size > 0
       initialized.value = true
+      // Check if more visible pages need to be loaded
       checkNeededPages()
     }
   }
 
-  // Check which pages are needed for the current visible window
+  // Check which pages are needed for the current visible window and abort out-of-viewport ones
   const checkNeededPages = () => {
     if (total.value <= 0) return
-    if (pendingPages.size >= MAX_CONCURRENT_PAGES) return
 
     const start = startIndex.value
     const end = endIndex.value
+    const buffer = Math.max(pageSize * 2, overscan * colCount.value + pageSize)
+    const minSafeIndex = Math.max(0, start - buffer)
+    const maxSafeIndex = end + buffer
 
+    // 1. Cancel in-flight page requests that have scrolled far outside viewport
+    for (const [offset, controller] of pendingPages.entries()) {
+      const pageEnd = offset + pageSize
+      if (pageEnd <= minSafeIndex || offset >= maxSafeIndex) {
+        try {
+          controller.abort()
+        } catch (e) {}
+        pendingPages.delete(offset)
+      }
+    }
+
+    if (pendingPages.size >= MAX_CONCURRENT_PAGES) return
+
+    // 2. Identify missing pages in the currently visible window
     const neededOffsets = new Set()
     for (let i = start; i < end; i++) {
       if (!itemsMap.value.has(i)) {
@@ -254,15 +296,29 @@ export function useVirtualScroll(options = {}) {
 
     if (neededOffsets.size === 0) return
 
-    // Prioritize chunks closest to current visible start
+    // Prioritize chunks closest to current visible center
+    const center = (start + end) / 2
     const sortedOffsets = Array.from(neededOffsets).sort((a, b) => {
-      return Math.abs(a - start) - Math.abs(b - start)
+      const centerA = a + pageSize / 2
+      const centerB = b + pageSize / 2
+      return Math.abs(centerA - center) - Math.abs(centerB - center)
     })
 
     for (const pageOffset of sortedOffsets) {
       if (pendingPages.size >= MAX_CONCURRENT_PAGES) break
       fetchPage(pageOffset)
     }
+  }
+
+  // Debounced scheduling of checkNeededPages during active scrolling
+  const scheduleCheckNeededPages = (delay = 80) => {
+    if (dwellTimer) {
+      clearTimeout(dwellTimer)
+    }
+    dwellTimer = setTimeout(() => {
+      dwellTimer = null
+      checkNeededPages()
+    }, delay)
   }
 
   // Detect UI scale applied via zoom or --ui-scale
@@ -316,7 +372,18 @@ export function useVirtualScroll(options = {}) {
       scrollTop.value = Math.max(0, -relativeTop)
     }
 
-    checkNeededPages()
+    // Dwell time: calculate velocity to distinguish high-speed flick from slow browsing
+    const now = performance.now()
+    const deltaY = Math.abs(scrollTop.value - lastScrollTop)
+    const dt = Math.max(1, now - lastScrollTime)
+    const velocity = deltaY / dt // px per ms
+    lastScrollTop = scrollTop.value
+    lastScrollTime = now
+
+    // If velocity is high (> 1.0 px/ms), fast flick is in progress: dwell 100ms
+    // If velocity is low / settled: check quickly with 30ms dwell
+    const delay = velocity > 1.0 ? 100 : 30
+    scheduleCheckNeededPages(delay)
     ticking = false
   }
 
@@ -334,8 +401,8 @@ export function useVirtualScroll(options = {}) {
         ? { ...extraParams.value, ...params }
         : params
     }
+    abortAllPending()
     loadedPages.clear()
-    pendingPages.clear()
     itemsMap.value = new Map()
     total.value = 0
     scrollTop.value = 0
@@ -345,8 +412,8 @@ export function useVirtualScroll(options = {}) {
   }
 
   const refresh = async () => {
+    abortAllPending()
     loadedPages.clear()
-    pendingPages.clear()
     itemsMap.value = new Map()
     await fetchPage(0)
     await nextTick()
@@ -359,8 +426,8 @@ export function useVirtualScroll(options = {}) {
   }
 
   const clear = () => {
+    abortAllPending()
     loadedPages.clear()
-    pendingPages.clear()
     itemsMap.value = new Map()
     total.value = 0
     initialized.value = false
@@ -420,7 +487,7 @@ export function useVirtualScroll(options = {}) {
 
   // Watch startIndex / endIndex to fetch missing chunks and evict distant pages
   watch([startIndex, endIndex, total], () => {
-    checkNeededPages()
+    scheduleCheckNeededPages(50)
     evictDistantPages()
   })
 

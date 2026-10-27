@@ -590,12 +590,15 @@ const handleCreatePlaylist = () => {
 }
 
 // ─── Track/Playlist/Album Fetch & Actions ───
-const fetchUserTracks = async ({ offset, limit }) => {
+const fetchUserTracks = async ({ offset, limit, signal }) => {
   const page = Math.floor(offset / limit) + 1
   try {
-    const res = await socialApi.getUserLibrary(userId.value, { page, per_page: limit })
+    const res = await socialApi.getUserLibrary(userId.value, { page, per_page: limit }, { signal })
     return { items: res.data.items || [], total: res.data.total || 0 }
   } catch (err) {
+    if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
+      throw err
+    }
     console.error('Failed to fetch user tracks:', err)
     return { items: [], total: 0 }
   }

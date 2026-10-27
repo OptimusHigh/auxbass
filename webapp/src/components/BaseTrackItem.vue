@@ -33,8 +33,8 @@
     
     <!-- Cover with play button -->
     <div class="cover-wrapper" @click.stop="togglePlay">
-      <div class="cover">
-        <img v-if="track.cover_url && !imageError" :src="getCoverUrl(track.cover_url, CoverSize.SMALL)" loading="lazy" alt="" @error="imageError = true" />
+      <div class="cover" ref="coverElRef">
+        <img v-if="resolvedSrc && !imageError && !isCoverError" :src="resolvedSrc" alt="" @error="imageError = true" />
         <Music v-else :size="20" />
       </div>
       <div class="play-overlay" :class="{ 'is-playing': isCurrentTrack && playerStore.isPlaying }">
@@ -78,9 +78,19 @@
 import { ref, computed, watch } from 'vue'
 import { usePlayerStore } from '@/stores/player'
 import { getCoverUrl, CoverSize } from '@/utils'
+import { useLazyCover } from '@/composables/useCoverLoader'
 import { Music } from 'lucide-vue-next'
 
 const imageError = ref(false)
+const coverElRef = ref(null)
+
+const targetCoverUrl = computed(() => {
+  if (!props.track?.cover_url) return null
+  return getCoverUrl(props.track.cover_url, CoverSize.SMALL)
+})
+
+const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
+
 watch(() => props.track?.id || props.track?.cover_url, () => {
   imageError.value = false
 })

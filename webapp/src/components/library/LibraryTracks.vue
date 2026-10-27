@@ -294,7 +294,7 @@ useTrackSync(tracks, { isLibraryList: true })
 const isRefreshing = ref(false)
 
 // Fetch function for VirtualTrackList (without search)
-const fetchTracks = async ({ offset, limit, _cb }) => {
+const fetchTracks = async ({ offset, limit, signal, _cb }) => {
   try {
     const shouldBypass = isRefreshing.value || Boolean(_cb)
     const response = await api.get('/tracks', {
@@ -305,10 +305,14 @@ const fetchTracks = async ({ offset, limit, _cb }) => {
         sort_order: sortOrder.value,
         ...(_cb ? { _cb } : {})
       },
+      signal,
       bypassCache: shouldBypass
     })
     return response.data
   } catch (err) {
+    if (err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') {
+      throw err
+    }
     // If offline / network error, fallback to cached tracks in IndexedDB
     try {
       const cached = await getAllCachedTracks()

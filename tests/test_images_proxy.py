@@ -1,6 +1,7 @@
 """
 Tests for image proxy endpoint and SSRF validation.
 """
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from api.routers.images import _is_safe_url, proxy_external_image
@@ -67,3 +68,65 @@ async def test_proxy_external_image_success():
         assert res.media_type == "image/jpeg"
         assert res.body == b"\xff\xd8\xff\xe0fake_jpeg_content"
         assert "max-age=604800" in res.headers["Cache-Control"]
+
+
+@pytest.mark.asyncio
+async def test_get_image_caching_and_deduplication():
+    """Verify that get_image caches in RAM and deduplicates in-flight calls."""
+    from api.routers.images import get_image, _image_cache, _file_path_cache
+
+    test_file_id = "AgACAgIAAxkBAAEB1234567890abcdefghijklmnopqrstuvwxyz"
+    _image_cache.pop(test_file_id, None)
+    _file_path_cache.pop(test_file_id, None)
+
+    mock_bot = MagicMock()
+    mock_file = MagicMock()
+    mock_file.file_path = "photos/test_cover.jpg"
+    mock_bot.get_file = AsyncMock(return_value=mock_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read = AsyncMock(return_value=b"fake_telegram_image_bytes")
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_resp
+    mock_cm.__aexit__.return_value = None
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_cm
+
+    with patch("api.routers.images._get_bot", return_value=mock_bot), \
+         patch("api.routers.images.get_http_session", AsyncMock(return_value=mock_session)):
+
+        # Concurrent calls: should deduplicate to 1 get_file and 1 session.get
+        res1, res2 = await asyncio.gather(
+            get_image(test_file_id),
+            get_image(test_file_id)
+        )
+
+        assert res1.status_code == 200
+        assert res2.status_code == 200
+        assert res1.body == b"fake_telegram_image_bytes"
+        assert res2.body == b"fake_telegram_image_bytes"
+        assert mock_bot.get_file.call_count == 1
+        assert mock_session.get.call_count == 1
+
+        # Third call: should hit LRU cache without hitting bot or session at all
+        res3 = await get_image(test_file_id)
+        assert res3.status_code == 200
+        assert res3.body == b"fake_telegram_image_bytes"
+        assert mock_bot.get_file.call_count == 1
+        assert mock_session.get.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_image_client_disconnect():
+    """Verify that get_image returns 499 if client disconnected early."""
+    from api.routers.images import get_image
+
+    mock_request = MagicMock()
+    mock_request.is_disconnected = AsyncMock(return_value=True)
+
+    res = await get_image("AgACAgIAAxkBAAEB_disconnect_test_12345678901234567890", request=mock_request)
+    assert res.status_code == 499
+

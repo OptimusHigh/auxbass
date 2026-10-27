@@ -13,13 +13,12 @@
     <span v-if="trackNumber" class="track-number">{{ trackNumber }}</span>
     
     <!-- Cover with generated gradient -->
-    <div v-if="!hideCover" class="track-cover" :style="coverStyle">
+    <div v-if="!hideCover" ref="coverElRef" class="track-cover" :style="coverStyle">
       <img 
-        v-if="track.cover_url && !track.is_unavailable && !imageError" 
-        :src="getCoverUrl(track.cover_url, CoverSize.SMALL)" 
+        v-if="resolvedSrc && !track.is_unavailable && !imageError && !isCoverError" 
+        :src="resolvedSrc" 
         alt=""
         class="cover-image"
-        loading="lazy"
         @error="imageError = true"
       />
       <span v-else class="cover-text">{{ track.is_unavailable ? '' : coverInitials }}<X v-if="track.is_unavailable" :size="16" /></span>
@@ -119,6 +118,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { formatDuration, getTrackCoverStyle, getTrackInitials, getDisplayTitle, getDisplayArtist, getCoverUrl, CoverSize, triggerHaptic, suppressNextClick, suppressNextContextMenu } from '@/utils'
+import { useLazyCover } from '@/composables/useCoverLoader'
 import { X, Check, ThumbsDown, Disc3 } from 'lucide-vue-next'
 
 const isMix = computed(() => {
@@ -128,6 +128,16 @@ const isMix = computed(() => {
 
 const router = useRouter()
 const imageError = ref(false)
+const coverElRef = ref(null)
+
+const targetCoverUrl = computed(() => {
+  if (props.hideCover || props.track?.is_unavailable || !props.track?.cover_url) {
+    return null
+  }
+  return getCoverUrl(props.track.cover_url, CoverSize.SMALL)
+})
+
+const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
 
 watch(() => props.track?.id || props.track?.cover_url, () => {
   imageError.value = false
