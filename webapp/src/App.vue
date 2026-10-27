@@ -569,6 +569,13 @@ watch(showFullPlayer, (isOpen, wasOpen) => {
   }
 })
 
+// === Channel Access Required Modal State ===
+const channelAccessModal = ref({
+  show: false,
+  channelTitle: '',
+  botUsername: ''
+})
+
 // Unified dismissal of topmost overlay: returns true if an overlay was consumed
 const dismissTopOverlay = () => {
   // 1. Context menu
@@ -760,13 +767,6 @@ const handleStallRecovered = (e) => {
 const handleNetworkRecovered = () => {
   uiStore.toast.success('Сеть восстановлена', 'Соединение восстановлено')
 }
-
-// === Channel Access Required Modal State ===
-const channelAccessModal = ref({
-  show: false,
-  channelTitle: '',
-  botUsername: ''
-})
 
 const handleChannelAccessRequired = (e) => {
   const detail = e.detail || {}
