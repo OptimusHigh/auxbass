@@ -121,28 +121,6 @@ import { formatDuration, getTrackCoverStyle, getTrackInitials, getDisplayTitle, 
 import { useLazyCover } from '@/composables/useCoverLoader'
 import { X, Check, ThumbsDown, Disc3 } from 'lucide-vue-next'
 
-const isMix = computed(() => {
-  const d = props.track?.duration
-  return Boolean(d && d >= 900)
-})
-
-const router = useRouter()
-const imageError = ref(false)
-const coverElRef = ref(null)
-
-const targetCoverUrl = computed(() => {
-  if (props.hideCover || props.track?.is_unavailable || !props.track?.cover_url) {
-    return null
-  }
-  return getCoverUrl(props.track.cover_url, CoverSize.SMALL)
-})
-
-const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
-
-watch(() => [props.track?.id, props.track?.cover_url], () => {
-  imageError.value = false
-})
-
 const props = defineProps({
   track: {
     type: Object,
@@ -187,6 +165,28 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['click', 'menu', 'like', 'addToLibrary', 'download', 'hdNotice'])
+
+const isMix = computed(() => {
+  const d = props.track?.duration
+  return Boolean(d && d >= 900)
+})
+
+const router = useRouter()
+const imageError = ref(false)
+const coverElRef = ref(null)
+
+const targetCoverUrl = computed(() => {
+  if (props.hideCover || props.track?.is_unavailable || !props.track?.cover_url) {
+    return null
+  }
+  return getCoverUrl(props.track.cover_url, CoverSize.SMALL)
+})
+
+const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
+
+watch(() => [props.track?.id, props.track?.cover_url], () => {
+  imageError.value = false
+})
 
 // Long-press handling for mobile touch
 let longPressTimer = null

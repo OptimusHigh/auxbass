@@ -81,20 +81,6 @@ import { getCoverUrl, CoverSize } from '@/utils'
 import { useLazyCover } from '@/composables/useCoverLoader'
 import { Music } from 'lucide-vue-next'
 
-const imageError = ref(false)
-const coverElRef = ref(null)
-
-const targetCoverUrl = computed(() => {
-  if (!props.track?.cover_url) return null
-  return getCoverUrl(props.track.cover_url, CoverSize.SMALL)
-})
-
-const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
-
-watch(() => [props.track?.id, props.track?.cover_url], () => {
-  imageError.value = false
-})
-
 const props = defineProps({
   track: { type: Object, required: true },
   index: { type: Number, default: 0 },
@@ -117,6 +103,20 @@ const emit = defineEmits([
   'handleTouchMove',
   'handleTouchEnd'
 ])
+
+const imageError = ref(false)
+const coverElRef = ref(null)
+
+const targetCoverUrl = computed(() => {
+  if (!props.track?.cover_url) return null
+  return getCoverUrl(props.track.cover_url, CoverSize.SMALL)
+})
+
+const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
+
+watch(() => [props.track?.id, props.track?.cover_url], () => {
+  imageError.value = false
+})
 
 const playerStore = usePlayerStore()
 

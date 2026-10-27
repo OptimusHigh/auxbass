@@ -153,6 +153,7 @@ watch(total, (newTotal) => {
   emit('update:total', newTotal)
 })
 
+
 // Event handlers
 const handleClick = (track, index) => {
   emit('click', { track, index, allTracks: getLoadedItems() })

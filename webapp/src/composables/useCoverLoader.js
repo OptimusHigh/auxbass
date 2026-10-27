@@ -22,6 +22,7 @@ let activeCount = 0
 const lifoStack = [] // Array of items waiting to be loaded (LIFO)
 const registry = new Map() // DOM Element -> item
 
+
 let sharedObserver = null
 
 function getSharedObserver() {
@@ -126,7 +127,17 @@ function processQueue() {
     const img = new Image()
     item.activeImg = img
 
+    let timer = setTimeout(() => {
+      if (item.activeImg === img) {
+        item.activeImg = null
+        activeCount = Math.max(0, activeCount - 1)
+        item.onError()
+        processQueue()
+      }
+    }, 8000)
+
     img.onload = () => {
+      clearTimeout(timer)
       if (item.activeImg === img) {
         item.activeImg = null
         activeCount = Math.max(0, activeCount - 1)
@@ -137,6 +148,7 @@ function processQueue() {
     }
 
     img.onerror = () => {
+      clearTimeout(timer)
       if (item.activeImg === img) {
         item.activeImg = null
         activeCount = Math.max(0, activeCount - 1)
@@ -220,17 +232,23 @@ export function useLazyCover(elRef, urlSource) {
   const isError = ref(false)
   const resolvedSrc = ref(null)
 
+  let registeredEl = null
+  let registeredUrl = null
+
   const cleanup = () => {
-    if (elRef?.value) {
-      coverLoader.unregister(elRef.value)
+    if (registeredEl) {
+      coverLoader.unregister(registeredEl)
+      registeredEl = null
+      registeredUrl = null
     }
   }
 
-  const update = (rawUrl) => {
-    cleanup()
+  const update = () => {
+    const el = elRef?.value
+    const url = unref(urlSource)
 
-    const url = unref(rawUrl)
-    if (!url) {
+    if (!el || !url) {
+      cleanup()
       isLoaded.value = false
       isError.value = false
       resolvedSrc.value = null
@@ -238,41 +256,49 @@ export function useLazyCover(elRef, urlSource) {
     }
 
     if (coverLoader.isCached(url)) {
+      cleanup()
       isLoaded.value = true
       isError.value = false
       resolvedSrc.value = url
       return
     }
 
+    // Avoid unregister/re-register churn if element and url haven't changed
+    if (registeredEl === el && registeredUrl === url) {
+      return
+    }
+
+    cleanup()
+
+    registeredEl = el
+    registeredUrl = url
     isLoaded.value = false
     isError.value = false
     resolvedSrc.value = null
 
-    if (elRef?.value) {
-      coverLoader.register(
-        elRef.value,
-        url,
-        (loadedUrl) => {
-          resolvedSrc.value = loadedUrl
-          isLoaded.value = true
-          isError.value = false
-        },
-        () => {
-          isError.value = true
-          isLoaded.value = false
-          resolvedSrc.value = null
-        }
-      )
-    }
+    coverLoader.register(
+      el,
+      url,
+      (loadedUrl) => {
+        resolvedSrc.value = loadedUrl
+        isLoaded.value = true
+        isError.value = false
+      },
+      () => {
+        isError.value = true
+        isLoaded.value = false
+        resolvedSrc.value = null
+      }
+    )
   }
 
-  watch(() => unref(urlSource), (newUrl) => {
-    update(newUrl)
+  watch(() => unref(urlSource), () => {
+    update()
   })
 
   watch(() => elRef?.value, (newEl) => {
     if (newEl) {
-      update(urlSource)
+      update()
     } else {
       cleanup()
     }
@@ -280,7 +306,7 @@ export function useLazyCover(elRef, urlSource) {
 
   onMounted(() => {
     if (elRef?.value) {
-      update(urlSource)
+      update()
     }
   })
 
