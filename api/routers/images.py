@@ -76,10 +76,25 @@ def _is_safe_url(url_str: str) -> bool:
         return False
 
 
+def _is_etag_matched(request: Optional[Request], etag: str) -> bool:
+    """Robust ETag matching supporting weak tags (W/), quotes, and wildcard (*)"""
+    if not request:
+        return False
+    inm = request.headers.get("if-none-match")
+    if not inm:
+        return False
+    inm_clean = inm.strip()
+    if inm_clean == "*":
+        return True
+    inm_unquoted = inm_clean.removeprefix("W/").strip('"')
+    etag_unquoted = etag.strip().removeprefix("W/").strip('"')
+    return inm_unquoted == etag_unquoted
+
+
 @router.get("/images/proxy")
 async def proxy_external_image(
+    request: Request,
     url: str = Query(..., description="External image URL to proxy"),
-    request: Request = None,
 ):
     """Proxy external cover art (SoundCloud, Spotify, Deezer, etc.) to ensure availability in restricted regions."""
     url = url.strip()
@@ -120,7 +135,7 @@ async def proxy_external_image(
                                         except Exception:
                                             fb_ct = "image/jpeg"
                                         etag = f'"{hashlib.md5(content).hexdigest()}"'
-                                        if request and request.headers.get("if-none-match") == etag:
+                                        if _is_etag_matched(request, etag):
                                             return Response(
                                                 status_code=304,
                                                 headers={
@@ -182,7 +197,7 @@ async def proxy_external_image(
                     logger.debug(f"Failed to auto-crop YouTube thumbnail: {crop_err}")
 
             etag = f'"{hashlib.md5(content).hexdigest()}"'
-            if request and request.headers.get("if-none-match") == etag:
+            if _is_etag_matched(request, etag):
                 return Response(
                     status_code=304,
                     headers={
@@ -293,7 +308,7 @@ async def _fetch_and_cache_telegram_image(file_id: str) -> Tuple[bytes, str]:
 
 
 @router.get("/images/{file_id}")
-async def get_image(file_id: str, request: Request = None):
+async def get_image(file_id: str, request: Request):
     """Proxy image from Telegram with in-memory LRU cache, deduplication, and disconnect checking."""
     # Validate file_id format
     if not file_id or len(file_id) < 20 or len(file_id) > 200:
@@ -307,7 +322,7 @@ async def get_image(file_id: str, request: Request = None):
             _image_cache.move_to_end(file_id)
             content, content_type = _image_cache[file_id]
             etag = f'"{file_id}"'
-            if request and request.headers.get("if-none-match") == etag:
+            if _is_etag_matched(request, etag):
                 return Response(
                     status_code=304,
                     headers={
@@ -345,7 +360,7 @@ async def get_image(file_id: str, request: Request = None):
             return Response(status_code=499)
 
         etag = f'"{file_id}"'
-        if request and request.headers.get("if-none-match") == etag:
+        if _is_etag_matched(request, etag):
             return Response(
                 status_code=304,
                 headers={
