@@ -130,3 +130,50 @@ async def test_get_image_client_disconnect():
     res = await get_image("AgACAgIAAxkBAAEB_disconnect_test_12345678901234567890", request=mock_request)
     assert res.status_code == 499
 
+
+@pytest.mark.asyncio
+async def test_get_image_dedup_one_disconnects_other_succeeds():
+    """Verify that if Request 1 disconnects, in-flight task continues for Request 2."""
+    from api.routers.images import get_image, _image_cache, _file_path_cache
+
+    test_file_id = "AgACAgIAAxkBAAEB_concurrent_disconnect_test_1234567890"
+    _image_cache.pop(test_file_id, None)
+    _file_path_cache.pop(test_file_id, None)
+
+    mock_bot = MagicMock()
+    mock_file = MagicMock()
+    mock_file.file_path = "photos/test_cover2.jpg"
+    mock_bot.get_file = AsyncMock(return_value=mock_file)
+
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read = AsyncMock(return_value=b"concurrent_image_bytes")
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_resp
+    mock_cm.__aexit__.return_value = None
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = mock_cm
+
+    req1 = MagicMock()
+    # req1 is disconnected
+    req1.is_disconnected = AsyncMock(return_value=True)
+
+    req2 = MagicMock()
+    # req2 stays connected
+    req2.is_disconnected = AsyncMock(return_value=False)
+
+    with patch("api.routers.images._get_bot", return_value=mock_bot), \
+         patch("api.routers.images.get_http_session", AsyncMock(return_value=mock_session)):
+
+        res1, res2 = await asyncio.gather(
+            get_image(test_file_id, request=req1),
+            get_image(test_file_id, request=req2)
+        )
+
+        assert res1.status_code == 499
+        assert res2.status_code == 200
+        assert res2.body == b"concurrent_image_bytes"
+
+

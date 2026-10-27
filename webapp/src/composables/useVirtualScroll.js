@@ -317,6 +317,7 @@ export function useVirtualScroll(options = {}) {
     }
     dwellTimer = setTimeout(() => {
       dwellTimer = null
+      updateScrollMetrics()
       checkNeededPages()
     }, delay)
   }
@@ -342,17 +343,16 @@ export function useVirtualScroll(options = {}) {
     return 1.0
   }
 
-  // Update scroll metrics
-  const updateScroll = () => {
-    if (!containerRef.value) return
+  // Recompute and update current scroll coordinates and viewport metrics
+  const updateScrollMetrics = () => {
+    if (!containerRef.value) return false
 
     const containerRect = containerRef.value.getBoundingClientRect()
     containerWidth.value = containerRef.value.clientWidth
 
-    // If container is hidden (e.g. inside a non-active tab), skip calculation to prevent runaway fetches
+    // If container is hidden (e.g. inside a non-active tab), skip calculation
     if (containerRect.width === 0 && containerRect.height === 0) {
-      ticking = false
-      return
+      return false
     }
 
     const sc = detectedScrollContainer || findScrollContainer(containerRef.value)
@@ -367,9 +367,17 @@ export function useVirtualScroll(options = {}) {
     } else if (sc) {
       viewportHeight.value = sc.clientHeight || (window.innerHeight / scale) || 800
       const scRect = sc.getBoundingClientRect()
-      // Compensate for UI scale on getBoundingClientRect visual pixels
       const relativeTop = (containerRect.top - scRect.top) / scale
       scrollTop.value = Math.max(0, -relativeTop)
+    }
+    return true
+  }
+
+  // Update scroll metrics and schedule needed pages check
+  const updateScroll = () => {
+    if (!updateScrollMetrics()) {
+      ticking = false
+      return
     }
 
     // Dwell time: calculate velocity to distinguish high-speed flick from slow browsing
@@ -385,6 +393,16 @@ export function useVirtualScroll(options = {}) {
     const delay = velocity > 1.0 ? 100 : 30
     scheduleCheckNeededPages(delay)
     ticking = false
+  }
+
+  // Immediate sync when scroll motion completely ceases (fires on modern browser scrollend)
+  const handleScrollEnd = () => {
+    if (dwellTimer) {
+      clearTimeout(dwellTimer)
+      dwellTimer = null
+    }
+    updateScrollMetrics()
+    checkNeededPages()
   }
 
   const handleScroll = () => {
@@ -497,8 +515,10 @@ export function useVirtualScroll(options = {}) {
     
     if (detectedScrollContainer && detectedScrollContainer !== window) {
       detectedScrollContainer.addEventListener('scroll', handleScroll, { passive: true })
+      detectedScrollContainer.addEventListener('scrollend', handleScrollEnd, { passive: true })
     }
     window.addEventListener('scroll', handleScroll, { passive: true })
+    window.addEventListener('scrollend', handleScrollEnd, { passive: true })
     window.addEventListener('resize', handleScroll, { passive: true })
 
     if (containerRef.value) {
@@ -520,10 +540,16 @@ export function useVirtualScroll(options = {}) {
   })
 
   onUnmounted(() => {
+    if (dwellTimer) {
+      clearTimeout(dwellTimer)
+      dwellTimer = null
+    }
     if (detectedScrollContainer && detectedScrollContainer !== window) {
       detectedScrollContainer.removeEventListener('scroll', handleScroll)
+      detectedScrollContainer.removeEventListener('scrollend', handleScrollEnd)
     }
     window.removeEventListener('scroll', handleScroll)
+    window.removeEventListener('scrollend', handleScrollEnd)
     window.removeEventListener('resize', handleScroll)
     if (resizeObserver) {
       resizeObserver.disconnect()

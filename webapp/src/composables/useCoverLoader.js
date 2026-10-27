@@ -14,8 +14,8 @@ import { ref, watch, unref, onMounted, onBeforeUnmount } from 'vue'
 const MAX_CONCURRENT_IMAGES = 4
 const DWELL_TIME_MS = 120
 
-// Cache of successfully loaded cover URLs
-const loadedCoversCache = new Set()
+// Cache of successfully loaded cover URLs in current session
+export const loadedUrls = new Set()
 
 // Active loaders state
 let activeCount = 0
@@ -55,7 +55,7 @@ function startDwell(item) {
   if (!item.url) return
 
   // Instant display if already cached
-  if (loadedCoversCache.has(item.url)) {
+  if (loadedUrls.has(item.url)) {
     item.onSuccess(item.url)
     return
   }
@@ -92,11 +92,15 @@ function removeFromStack(item) {
 
 function abortLoading(item) {
   if (item.activeImg) {
-    item.activeImg.onload = null
-    item.activeImg.onerror = null
-    // Resetting img.src to empty string immediately cancels browser HTTP request
-    item.activeImg.src = ''
+    const img = item.activeImg
+    // Nullify callbacks before clearing src to prevent ghost events in WebViews
+    img.onload = null
+    img.onerror = null
+    try {
+      img.src = ''
+    } catch (_) {}
     item.activeImg = null
+    // Guaranteed synchronous decrement and queue processing
     activeCount = Math.max(0, activeCount - 1)
     processQueue()
   }
@@ -113,7 +117,7 @@ function processQueue() {
     }
 
     // Already cached while waiting?
-    if (loadedCoversCache.has(item.url)) {
+    if (loadedUrls.has(item.url)) {
       item.onSuccess(item.url)
       continue
     }
@@ -126,7 +130,7 @@ function processQueue() {
       if (item.activeImg === img) {
         item.activeImg = null
         activeCount = Math.max(0, activeCount - 1)
-        loadedCoversCache.add(item.url)
+        loadedUrls.add(item.url)
         item.onSuccess(item.url)
         processQueue()
       }
@@ -147,11 +151,17 @@ function processQueue() {
 
 export const coverLoader = {
   isCached(url) {
-    return Boolean(url && loadedCoversCache.has(url))
+    return Boolean(url && loadedUrls.has(url))
   },
 
   register(element, url, onSuccess, onError) {
     if (!element || !url) return
+
+    // Fast-path: already loaded in this session, bypass observer and queue
+    if (loadedUrls.has(url)) {
+      onSuccess(url)
+      return
+    }
 
     // If already in registry with same URL, do nothing
     const existing = registry.get(element)

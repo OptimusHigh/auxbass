@@ -184,13 +184,17 @@ async def proxy_external_image(
 
 async def _all_subscribers_disconnected(file_id: str) -> bool:
     """Check if all clients waiting for this in-flight image have disconnected."""
-    subs = _inflight_subscribers.get(file_id)
-    if not subs:
-        return False
-    for req in list(subs):
-        if req is not None and await req.is_disconnected():
+    async with _inflight_lock:
+        subs = _inflight_subscribers.get(file_id)
+        if not subs:
+            return False
+        disconnected = []
+        for req in list(subs):
+            if req is not None and await req.is_disconnected():
+                disconnected.append(req)
+        for req in disconnected:
             subs.discard(req)
-    return len(subs) == 0
+        return len(subs) == 0
 
 
 async def _fetch_and_cache_telegram_image(file_id: str) -> Tuple[bytes, str]:
@@ -315,10 +319,14 @@ async def get_image(file_id: str, request: Request = None):
         logger.error(f"Failed to proxy image {file_id[:30]}...: {e}")
         raise HTTPException(status_code=404, detail="Image not found")
     finally:
-        if request:
-            _inflight_subscribers[file_id].discard(request)
         async with _inflight_lock:
-            # If the task completed or failed, clean up reference
-            if task.done() and _inflight_image_tasks.get(file_id) is task:
-                _inflight_image_tasks.pop(file_id, None)
-                _inflight_subscribers.pop(file_id, None)
+            if request:
+                subs = _inflight_subscribers.get(file_id)
+                if subs:
+                    subs.discard(request)
+            # Clean up task & subscribers map only when task is done and no subscribers remain
+            subs = _inflight_subscribers.get(file_id)
+            if task.done() and (not subs or len(subs) == 0):
+                if _inflight_image_tasks.get(file_id) is task:
+                    _inflight_image_tasks.pop(file_id, None)
+                    _inflight_subscribers.pop(file_id, None)

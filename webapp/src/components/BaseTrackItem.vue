@@ -91,7 +91,7 @@ const targetCoverUrl = computed(() => {
 
 const { resolvedSrc, isError: isCoverError } = useLazyCover(coverElRef, targetCoverUrl)
 
-watch(() => props.track?.id || props.track?.cover_url, () => {
+watch(() => [props.track?.id, props.track?.cover_url], () => {
   imageError.value = false
 })
 
