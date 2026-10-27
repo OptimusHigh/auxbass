@@ -1,5 +1,6 @@
 import asyncio
 from collections import OrderedDict, defaultdict
+import hashlib
 import ipaddress
 import logging
 import re
@@ -118,10 +119,22 @@ async def proxy_external_image(
                                             fb_ct = "image/jpeg" if ext == "jpg" else "image/png"
                                         except Exception:
                                             fb_ct = "image/jpeg"
+                                        etag = f'"{hashlib.md5(content).hexdigest()}"'
+                                        if request and request.headers.get("if-none-match") == etag:
+                                            return Response(
+                                                status_code=304,
+                                                headers={
+                                                    "ETag": etag,
+                                                    "Cache-Control": "public, max-age=604800, immutable",
+                                                },
+                                            )
                                         return Response(
                                             content=content,
                                             media_type=fb_ct,
-                                            headers={"Cache-Control": "public, max-age=604800, immutable"},
+                                            headers={
+                                                "ETag": etag,
+                                                "Cache-Control": "public, max-age=604800, immutable",
+                                            },
                                         )
                             except Exception as fb_err:
                                 logger.debug(f"YouTube thumbnail fallback failed: {fb_err}")
@@ -168,10 +181,23 @@ async def proxy_external_image(
                 except Exception as crop_err:
                     logger.debug(f"Failed to auto-crop YouTube thumbnail: {crop_err}")
 
+            etag = f'"{hashlib.md5(content).hexdigest()}"'
+            if request and request.headers.get("if-none-match") == etag:
+                return Response(
+                    status_code=304,
+                    headers={
+                        "ETag": etag,
+                        "Cache-Control": "public, max-age=604800, immutable",
+                    },
+                )
+
             return Response(
                 content=content,
                 media_type=content_type,
-                headers={"Cache-Control": "public, max-age=604800, immutable"},  # Cache 7 days
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=604800, immutable",
+                },
             )
     except HTTPException:
         raise
@@ -280,10 +306,22 @@ async def get_image(file_id: str, request: Request = None):
         if file_id in _image_cache:
             _image_cache.move_to_end(file_id)
             content, content_type = _image_cache[file_id]
+            etag = f'"{file_id}"'
+            if request and request.headers.get("if-none-match") == etag:
+                return Response(
+                    status_code=304,
+                    headers={
+                        "ETag": etag,
+                        "Cache-Control": "public, max-age=604800, immutable",
+                    },
+                )
             return Response(
                 content=content,
                 media_type=content_type,
-                headers={"Cache-Control": "public, max-age=86400"},
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=604800, immutable",
+                },
             )
 
     # 2. Check early client disconnect
@@ -306,10 +344,23 @@ async def get_image(file_id: str, request: Request = None):
         if request and await request.is_disconnected():
             return Response(status_code=499)
 
+        etag = f'"{file_id}"'
+        if request and request.headers.get("if-none-match") == etag:
+            return Response(
+                status_code=304,
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "public, max-age=604800, immutable",
+                },
+            )
+
         return Response(
             content=content,
             media_type=content_type,
-            headers={"Cache-Control": "public, max-age=86400"},
+            headers={
+                "ETag": etag,
+                "Cache-Control": "public, max-age=604800, immutable",
+            },
         )
     except asyncio.CancelledError:
         return Response(status_code=499)

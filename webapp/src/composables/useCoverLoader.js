@@ -17,6 +17,30 @@ const DWELL_TIME_MS = 120
 // Cache of successfully loaded cover URLs in current session
 export const loadedUrls = new Set()
 
+if (typeof window !== 'undefined' && window.sessionStorage) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('aux_loaded_covers') || '[]')
+    if (Array.isArray(saved)) {
+      for (const u of saved) loadedUrls.add(u)
+    }
+  } catch (_) {}
+}
+
+let saveTimer = null
+function persistLoadedUrl(url) {
+  loadedUrls.add(url)
+  if (typeof window === 'undefined' || !window.sessionStorage) return
+  if (!saveTimer) {
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      try {
+        const arr = Array.from(loadedUrls).slice(-500)
+        sessionStorage.setItem('aux_loaded_covers', JSON.stringify(arr))
+      } catch (_) {}
+    }, 1000)
+  }
+}
+
 // Active loaders state
 let activeCount = 0
 const lifoStack = [] // Array of items waiting to be loaded (LIFO)
@@ -141,7 +165,7 @@ function processQueue() {
       if (item.activeImg === img) {
         item.activeImg = null
         activeCount = Math.max(0, activeCount - 1)
-        loadedUrls.add(item.url)
+        persistLoadedUrl(item.url)
         item.onSuccess(item.url)
         processQueue()
       }
@@ -228,9 +252,12 @@ export const coverLoader = {
  * @param {Ref<string>|Function|string} urlSource - Cover image URL
  */
 export function useLazyCover(elRef, urlSource) {
-  const isLoaded = ref(false)
+  const initialUrl = unref(urlSource)
+  const isPreCached = coverLoader.isCached(initialUrl)
+
+  const isLoaded = ref(isPreCached)
   const isError = ref(false)
-  const resolvedSrc = ref(null)
+  const resolvedSrc = ref(isPreCached ? initialUrl : null)
 
   let registeredEl = null
   let registeredUrl = null

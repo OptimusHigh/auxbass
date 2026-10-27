@@ -1,6 +1,18 @@
 const CACHE_NAME = 'tg-player-v3';
 const STATIC_CACHE = 'tg-player-static-v3';
 const AUDIO_CACHE = 'tg-player-audio-v2';
+const IMAGE_CACHE = 'tg-player-images-v1';
+
+async function trimCache(cacheName, maxItems) {
+  try {
+    const cache = await caches.open(cacheName);
+    const keys = await cache.keys();
+    if (keys.length > maxItems) {
+      await cache.delete(keys[0]);
+      trimCache(cacheName, maxItems);
+    }
+  } catch (_) {}
+}
 
 // Статические ресурсы для кэширования
 const STATIC_ASSETS = [
@@ -36,7 +48,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames
-          .filter((name) => name !== STATIC_CACHE && name !== AUDIO_CACHE && name !== CACHE_NAME)
+          .filter((name) => name !== STATIC_CACHE && name !== AUDIO_CACHE && name !== CACHE_NAME && name !== IMAGE_CACHE)
           .map((name) => {
             console.log('[SW] Deleting old cache:', name);
             return caches.delete(name);
@@ -56,7 +68,31 @@ self.addEventListener('fetch', (event) => {
   // Пропускаем внешние запросы (не к нашему origin)
   if (url.origin !== self.location.origin) return;
 
-  // Пропускаем API запросы (они должны быть свежими)
+  // Для картинок обложек (/api/images/...) - кэшируем в CacheStorage (Cache-First)
+  if (url.pathname.startsWith('/api/images/')) {
+    event.respondWith(
+      caches.open(IMAGE_CACHE).then((cache) => {
+        return cache.match(event.request).then((cached) => {
+          if (cached) return cached;
+          return fetch(event.request).then((response) => {
+            if (response.status === 200) {
+              const clone = response.clone();
+              cache.put(event.request, clone).then(() => {
+                trimCache(IMAGE_CACHE, 300);
+              });
+            }
+            return response;
+          }).catch((err) => {
+            console.warn('[SW] Image fetch failed:', event.request.url, err);
+            return new Response('', { status: 408, statusText: 'Image fetch timeout or error' });
+          });
+        });
+      })
+    );
+    return;
+  }
+
+  // Пропускаем остальные API запросы (они должны быть свежими)
   if (url.pathname.startsWith('/api/')) return;
   
   // Для аудио файлов - network first, потом cache
