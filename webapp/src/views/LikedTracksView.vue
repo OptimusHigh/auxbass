@@ -104,7 +104,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePlayerStore } from '@/stores/player'
 import { useLibraryStore } from '@/stores/library'
@@ -190,6 +190,10 @@ onMounted(async () => {
   loading.value = true
   await libraryStore.fetchLikedTracks()
   loading.value = false
+})
+
+onActivated(async () => {
+  await libraryStore.fetchLikedTracks()
 })
 </script>
 

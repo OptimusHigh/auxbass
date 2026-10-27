@@ -1422,12 +1422,42 @@ export const usePlayerStore = defineStore('player', () => {
     let i = queue.value.length
     while (i--) {
       if (queue.value[i].id === trackId) {
-        if (i === queueIndex.value) continue // don't remove currently playing
+        if (i === queueIndex.value && currentTrack.value?.id === trackId) continue // don't remove currently playing via simple prune
         queue.value.splice(i, 1)
         if (i < queueIndex.value) queueIndex.value--
       }
     }
     persistState()
+  }
+
+  /**
+   * Handle when a track is deleted from library or server.
+   * If the track is currently playing:
+   * - If queue has other tracks, switch to next(), then prune the deleted track from queue
+   * - If queue has no other tracks (or only this track), stop playback completely
+   * Ensures that pressing prev() will never play the deleted track or throw 404.
+   */
+  const handleTrackRemoved = async (trackId) => {
+    if (!trackId) return
+    const isPlayingThis = currentTrack.value?.id === trackId
+
+    if (isPlayingThis) {
+      if (queue.value.length > 1) {
+        await next()
+        let i = queue.value.length
+        while (i--) {
+          if (queue.value[i].id === trackId) {
+            queue.value.splice(i, 1)
+            if (i < queueIndex.value) queueIndex.value--
+          }
+        }
+        persistState()
+      } else {
+        stop()
+      }
+    } else {
+      removeTrackFromQueue(trackId)
+    }
   }
 
   const moveInQueue = (fromRel, toRel) => {
@@ -1583,6 +1613,7 @@ export const usePlayerStore = defineStore('player', () => {
     addToQueue,
     removeFromQueue,
     removeTrackFromQueue,
+    handleTrackRemoved,
     moveInQueue,
     toggleShuffle,
     toggleRepeat,

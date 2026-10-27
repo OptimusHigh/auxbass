@@ -492,8 +492,11 @@ export const useLibraryStore = defineStore('library', () => {
    */
   const notifyPlaylistChange = async (playlistId = null) => {
     apiCache.invalidateRelated('playlist', playlistId)
+    apiCache.invalidatePattern('/playlists')
+    apiCache.invalidatePattern('/minecraft/quota')
     if (playlistId) {
       apiCache.delete(`/playlists/${playlistId}`)
+      apiCache.invalidatePattern(`/playlists/${playlistId}`)
     }
     await fetchPlaylists(true)
     window.dispatchEvent(new CustomEvent('playlist:changed', {
@@ -622,10 +625,12 @@ export const useLibraryStore = defineStore('library', () => {
       }
     }
 
-    // 3. Remove from player queue
+    // 3. Remove from player queue and handle currently playing track safely
     const { usePlayerStore } = await import('./player')
     const playerStore = usePlayerStore()
-    if (typeof playerStore.removeTrackFromQueue === 'function') {
+    if (typeof playerStore.handleTrackRemoved === 'function') {
+      await playerStore.handleTrackRemoved(trackId)
+    } else if (typeof playerStore.removeTrackFromQueue === 'function') {
       playerStore.removeTrackFromQueue(trackId)
     }
 

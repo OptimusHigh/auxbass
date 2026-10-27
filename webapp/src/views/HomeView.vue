@@ -486,8 +486,25 @@ const onPlaylistChanged = () => {
   })
 }
 
+const onTrackAdded = () => {
+  libraryStore.fetchRecentUploads(15).finally(() => {
+    loadingUploads.value = false
+  })
+  libraryStore.fetchPlaylists(true)
+}
+
+const onTrackChangedOrRemoved = () => {
+  libraryStore.fetchRecentUploads(15).finally(() => {
+    loadingUploads.value = false
+  })
+}
+
 onMounted(() => {
   window.addEventListener('playlist:changed', onPlaylistChanged)
+  window.addEventListener('track:added:library', onTrackAdded)
+  window.addEventListener('track:removed', onTrackChangedOrRemoved)
+  window.addEventListener('track:removed:library', onTrackChangedOrRemoved)
+  window.addEventListener('track:changed', onTrackChangedOrRemoved)
 
   // SWR: If store already has cached data from localStorage, immediately show it (no skeletons)
   loadingPlaylists.value = !libraryStore.playlists?.length
@@ -512,13 +529,18 @@ onMounted(() => {
 })
 
 onActivated(() => {
-  // Always refresh playlists and liked tracks when returning to Home tab
+  // Always refresh playlists, liked tracks, and recent uploads when returning to Home tab
   libraryStore.fetchPlaylists(true)
   libraryStore.fetchLikedTracks()
+  libraryStore.fetchRecentUploads(15)
 })
 
 onUnmounted(() => {
   window.removeEventListener('playlist:changed', onPlaylistChanged)
+  window.removeEventListener('track:added:library', onTrackAdded)
+  window.removeEventListener('track:removed', onTrackChangedOrRemoved)
+  window.removeEventListener('track:removed:library', onTrackChangedOrRemoved)
+  window.removeEventListener('track:changed', onTrackChangedOrRemoved)
 })
 </script>
 

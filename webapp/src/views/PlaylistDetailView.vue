@@ -456,14 +456,29 @@ const onPlaylistChanged = (e) => {
   }
 }
 
+const onTrackRemovedGlobal = (e) => {
+  const removedId = e?.detail?.trackId
+  if (!removedId) return
+  if (playlist.value && Array.isArray(playlist.value.tracks)) {
+    playlist.value.track_count = playlist.value.tracks.length
+  }
+  if (isPersonalMinecraftPlaylist.value && authStore.user?.id) {
+    loadQuota(authStore.user.id)
+  }
+}
+
 // Load on mount & listen for global changes
 onMounted(() => {
   loadPlaylist(true)
   window.addEventListener('playlist:changed', onPlaylistChanged)
+  window.addEventListener('track:removed', onTrackRemovedGlobal)
+  window.addEventListener('track:removed:library', onTrackRemovedGlobal)
 })
 
 onUnmounted(() => {
   window.removeEventListener('playlist:changed', onPlaylistChanged)
+  window.removeEventListener('track:removed', onTrackRemovedGlobal)
+  window.removeEventListener('track:removed:library', onTrackRemovedGlobal)
 })
 
 // Reload when route params change (for sidebar navigation)

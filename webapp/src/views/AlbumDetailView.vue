@@ -207,7 +207,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { usePlayerStore } from '@/stores/player'
 import { useLibraryStore } from '@/stores/library'
@@ -446,8 +446,17 @@ const formatYear = (date) => {
   return new Date(date).getFullYear()
 }
 
+const onTrackAdded = () => {
+  loadAlbum()
+}
+
 onMounted(() => {
   loadAlbum()
+  window.addEventListener('track:added:library', onTrackAdded)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('track:added:library', onTrackAdded)
 })
 
 // Reload when route params change (for sidebar navigation)

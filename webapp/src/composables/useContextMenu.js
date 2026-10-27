@@ -257,9 +257,6 @@ export function useContextMenu() {
       if (confirm('Удалить трек полностью?')) {
         try {
           await libraryStore.deleteTrack(track.id)
-          if (playerStore.currentTrack?.id === track.id) {
-            playerStore.next()
-          }
           uiStore.toast.success('Удалено', 'Трек удалён')
         } catch (error) {
           console.error('Failed to delete track:', error)
@@ -306,7 +303,7 @@ export function useContextMenu() {
       if (!track?.id || !playlistId) return closeMenu()
       
       try {
-        await playlistsApi.removeTrack(playlistId, track.id)
+        await libraryStore.removeTrackFromPlaylist(playlistId, track.id)
         uiStore.toast.success('Удалено', 'Трек убран из плейлиста')
       } catch (error) {
         console.error('Failed to remove from playlist:', error)

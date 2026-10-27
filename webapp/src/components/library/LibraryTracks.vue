@@ -21,20 +21,8 @@
         />
       </div>
 
-      <!-- Right action controls: Refresh & Expandable Search -->
+      <!-- Right action controls: Expandable Search -->
       <div class="toolbar-actions-right" :class="{ 'search-active': isSearchOpen }">
-        <button 
-          v-if="!isSearchOpen"
-          class="refresh-btn" 
-          :class="{ 'is-refreshing': isRefreshing }"
-          @click="refreshTracks" 
-          :disabled="isRefreshing"
-          title="Обновить список треков"
-          aria-label="Обновить список треков"
-        >
-          <RefreshCw :size="16" class="refresh-icon" :class="{ 'spin-anim': isRefreshing }" />
-        </button>
-
         <!-- Expandable Search -->
         <ExpandableSearch
           v-model="localQuery"
@@ -170,7 +158,7 @@ import ExpandableSearch from '@/components/ui/ExpandableSearch.vue'
 import api from '@/api/client'
 import apiCache from '@/utils/apiCache'
 import { getAllCachedTracks } from '@/utils/audioCacheDb'
-import { Music, Shuffle, Search, RefreshCw } from 'lucide-vue-next'
+import { Music, Shuffle, Search } from 'lucide-vue-next'
 
 // Universal context menu
 const { openMenu } = useContextMenu()
@@ -336,40 +324,33 @@ const fetchTracks = async ({ offset, limit, _cb }) => {
   }
 }
 
-// Force refresh tracks list and library sync
-const refreshTracks = async () => {
-  if (isRefreshing.value) return
-  isRefreshing.value = true
-  try {
-    // 1. Invalidate frontend API cache for all tracks & library
-    apiCache.invalidatePattern('/tracks')
-    apiCache.invalidatePattern('/library')
-    apiCache.invalidatePattern('/artists')
-    apiCache.invalidatePattern('/albums')
-
-    // 2. Refresh search or virtual list
-    if (effectiveSearchQuery.value) {
-      page.value = 1
-      await loadSearchTracks()
-    } else {
-      if (virtualTrackListRef.value) {
-        await virtualTrackListRef.value.reset({ _cb: Date.now() })
-      }
-    }
-
-    // 3. Re-fetch library store data & sync state
-    await libraryStore.checkSyncState(true)
-    libraryStore.fetchTracks({ refresh: true, bypassCache: true }).catch(() => {})
-    libraryStore.fetchPlaylists(true).catch(() => {})
-
-    uiStore.toast?.success('Список обновлён', 'Данные медиатеки синхронизированы')
-  } catch (err) {
-    console.error('Refresh tracks failed:', err)
-    uiStore.toast?.error('Ошибка обновления', 'Не удалось обновить список треков')
-  } finally {
-    isRefreshing.value = false
+// Auto-sync tracks on library events
+const onLibraryTrackAdded = () => {
+  if (effectiveSearchQuery.value) {
+    page.value = 1
+    loadSearchTracks()
+  } else {
+    virtualTrackListRef.value?.reset({ _cb: Date.now() })
   }
 }
+
+const onTrackRemovedGlobal = () => {
+  if (searchTotal.value > 0) {
+    searchTotal.value = Math.max(0, searchTotal.value - 1)
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('track:added:library', onLibraryTrackAdded)
+  window.addEventListener('track:removed', onTrackRemovedGlobal)
+  window.addEventListener('track:removed:library', onTrackRemovedGlobal)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('track:added:library', onLibraryTrackAdded)
+  window.removeEventListener('track:removed', onTrackRemovedGlobal)
+  window.removeEventListener('track:removed:library', onTrackRemovedGlobal)
+})
 
 // Handle click from VirtualTrackList
 const handleVirtualClick = ({ track, index, allTracks }) => {
@@ -633,48 +614,6 @@ onUnmounted(() => {
   width: 100%;
 }
 
-.refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: var(--c-bg-2, rgba(255, 255, 255, 0.08));
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: var(--c-text-2, rgba(255, 255, 255, 0.8));
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  flex-shrink: 0;
-}
-
-.refresh-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.15);
-  color: var(--c-text-1, #fff);
-  border-color: rgba(255, 255, 255, 0.15);
-  transform: translateY(-1px) scale(1.05);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.refresh-btn:active:not(:disabled) {
-  transform: scale(0.95);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.refresh-icon {
-  color: var(--c-text-2, rgba(255, 255, 255, 0.75));
-  transition: color 0.2s ease;
-  flex-shrink: 0;
-}
-
-.refresh-btn:hover:not(:disabled) .refresh-icon {
-  color: var(--c-text-1, #fff);
-}
 
 .spin-anim {
   animation: spin 1s linear infinite;

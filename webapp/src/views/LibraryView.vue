@@ -323,17 +323,6 @@
               <CloudDownload :size="16" class="import-icon" />
               <span class="import-text">Импорт</span>
             </button>
-
-            <button 
-              class="overview-refresh-btn" 
-              :class="{ 'is-refreshing': isOverviewRefreshing }"
-              @click="handleForceRefresh"
-              :disabled="isOverviewRefreshing"
-              title="Обновить медиатеку"
-              aria-label="Обновить медиатеку"
-            >
-              <RefreshCw :size="16" class="refresh-icon" :class="{ 'spin-anim': isOverviewRefreshing }" />
-            </button>
           </div>
 
           <!-- Recent Tracks List -->
@@ -419,8 +408,7 @@ import {
   Shuffle, 
   ChevronRight,
   ChevronLeft,
-  CloudDownload,
-  RefreshCw
+  CloudDownload
 } from 'lucide-vue-next'
 import { useHorizontalScroll } from '@/composables/useHorizontalScroll'
 
@@ -433,22 +421,6 @@ const playerStore = usePlayerStore()
 const tasksStore = useTasksStore()
 const { openMenu } = useContextMenu()
 const { handleLikeTrack, handleDirectDownload, handleHdNotice } = useTrackActions()
-
-const isOverviewRefreshing = ref(false)
-
-const handleForceRefresh = async () => {
-  if (isOverviewRefreshing.value) return
-  isOverviewRefreshing.value = true
-  try {
-    await libraryStore.refresh()
-    await loadOverviewData(true)
-    uiStore.toast?.success('Медиатека обновлена', 'Данные успешно синхронизированы')
-  } catch (err) {
-    console.error('Failed to force refresh library:', err)
-  } finally {
-    isOverviewRefreshing.value = false
-  }
-}
 
 const handleImportFinished = () => {
   loadOverviewData(true)
@@ -771,6 +743,22 @@ const handleResetState = (event) => {
   }
 }
 
+const onPlaylistChanged = () => {
+  loadOverviewData(true)
+}
+
+const onTrackAdded = () => {
+  loadOverviewData(true)
+}
+
+const onTrackRemoved = () => {
+  loadOverviewData(true)
+}
+
+const onTrackChanged = () => {
+  loadOverviewData(false)
+}
+
 onMounted(() => {
   applyRouteTab()
   applyRouteSearch()
@@ -778,11 +766,11 @@ onMounted(() => {
   window.addEventListener('reset-view-state', handleResetState)
   window.addEventListener('app-search', handleAppSearch)
   window.addEventListener('playlist:changed', onPlaylistChanged)
+  window.addEventListener('track:added:library', onTrackAdded)
+  window.addEventListener('track:removed', onTrackRemoved)
+  window.addEventListener('track:removed:library', onTrackRemoved)
+  window.addEventListener('track:changed', onTrackChanged)
 })
-
-const onPlaylistChanged = () => {
-  loadOverviewData(true)
-}
 
 onActivated(() => {
   applyRouteTab()
@@ -794,6 +782,10 @@ onUnmounted(() => {
   window.removeEventListener('reset-view-state', handleResetState)
   window.removeEventListener('app-search', handleAppSearch)
   window.removeEventListener('playlist:changed', onPlaylistChanged)
+  window.removeEventListener('track:added:library', onTrackAdded)
+  window.removeEventListener('track:removed', onTrackRemoved)
+  window.removeEventListener('track:removed:library', onTrackRemoved)
+  window.removeEventListener('track:changed', onTrackChanged)
 })
 </script>
 
@@ -1309,40 +1301,6 @@ onUnmounted(() => {
   color: #ff5500;
 }
 
-.overview-refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--c-text-2, rgba(255, 255, 255, 0.7));
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
-  flex-shrink: 0;
-}
-
-.overview-refresh-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  border-color: rgba(255, 255, 255, 0.25);
-  transform: translateY(-1px) scale(1.05);
-}
-
-.overview-refresh-btn:active:not(:disabled) {
-  transform: scale(0.95);
-}
-
-.overview-refresh-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.overview-refresh-btn .spin-anim {
-  animation: spin 1s linear infinite;
-}
 
 .shuffle-all-btn {
   display: inline-flex;

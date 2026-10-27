@@ -277,8 +277,17 @@ const formatYear = (date) => {
   return new Date(date).getFullYear()
 }
 
+const onTrackAdded = () => {
+  loadArtist()
+}
+
 onMounted(() => {
   loadArtist()
+  window.addEventListener('track:added:library', onTrackAdded)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('track:added:library', onTrackAdded)
 })
 
 // Reload when scope changes

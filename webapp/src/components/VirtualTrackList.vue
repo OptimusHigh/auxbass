@@ -207,7 +207,7 @@ const onLibraryTrackRemoved = (event) => {
 
 const onLibraryTrackAdded = () => {
   if (props.menuContext === 'library') {
-    reset()
+    reset({ _cb: Date.now() })
   }
 }
 
