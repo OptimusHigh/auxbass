@@ -249,19 +249,29 @@
 
         <!-- Library Sub-links -->
         <div class="sidebar-subnav">
-          <div 
-            class="nav-subitem clickable" 
+          <div
+            class="nav-subitem clickable"
             :class="{ active: route.name === 'library' && route.query.tab === 'tracks' }"
             @click="goToLibraryTab('tracks')"
             title="Все треки медиатеки"
           >
             <Music :size="15" />
             <span>Все треки</span>
-            <span v-if="libraryStore.tracks?.length" class="sub-count">{{ libraryStore.tracks.length }}</span>
+            <span v-if="libraryStore.total || libraryStore.tracks?.length" class="sub-count">{{ libraryStore.total || libraryStore.tracks.length }}</span>
           </div>
 
-          <div 
-            class="nav-subitem clickable" 
+          <div
+            class="nav-subitem clickable"
+            :class="{ active: route.name === 'library' && route.query.tab === 'playlists' }"
+            @click="goToLibraryTab('playlists')"
+            title="Плейлисты"
+          >
+            <ListMusic :size="15" />
+            <span>Плейлисты</span>
+          </div>
+
+          <div
+            class="nav-subitem clickable"
             :class="{ active: route.name === 'library' && route.query.tab === 'artists' }"
             @click="goToLibraryTab('artists')"
             title="Исполнители"
@@ -270,8 +280,8 @@
             <span>Артисты</span>
           </div>
 
-          <div 
-            class="nav-subitem clickable" 
+          <div
+            class="nav-subitem clickable"
             :class="{ active: route.name === 'library' && route.query.tab === 'albums' }"
             @click="goToLibraryTab('albums')"
             title="Альбомы"
@@ -468,17 +478,18 @@ import { usePlayerStore } from '@/stores/player'
 import { useTasksStore } from '@/stores/tasks'
 import { useContextMenu } from '@/composables/useContextMenu'
 import { getCoverUrl, CoverSize, getPlaylistCoverStyle } from '@/utils'
-import { 
-  FolderDown, 
-  Upload, 
-  Music, 
-  Mic2, 
-  Disc3, 
-  Search, 
-  Heart, 
-  ChevronRight, 
-  ChevronLeft, 
-  Settings, 
+import {
+  FolderDown,
+  Upload,
+  Music,
+  Mic2,
+  Disc3,
+  ListMusic,
+  Search,
+  Heart,
+  ChevronRight,
+  ChevronLeft,
+  Settings,
   FileSpreadsheet,
   Cloud,
   Radio,

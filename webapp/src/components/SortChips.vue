@@ -70,11 +70,8 @@ const toggleOrder = () => {
   display: flex;
   height: 40px;
   border-radius: var(--r-full);
-  background: var(--c-accent);
-  box-shadow: 
-    4px 4px 8px var(--sh-dark),
-    -2px -2px 4px var(--sh-light),
-    0 0 12px var(--c-accent-glow);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   overflow: hidden;
 }
 
@@ -87,18 +84,22 @@ const toggleOrder = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--c-accent-text, #000);
+  color: #fff;
   cursor: pointer;
   transition: all 0.15s ease;
   position: relative;
 }
 
 .sort-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sort-btn:hover .chip-icon {
+  color: var(--c-accent, #1db954);
 }
 
 .sort-btn:active {
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.15);
   box-shadow: inset 1px 1px 3px rgba(0, 0, 0, 0.2);
 }
 
@@ -109,7 +110,7 @@ const toggleOrder = () => {
   bottom: 10px;
   right: 0;
   width: 1px;
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .chip-icon {

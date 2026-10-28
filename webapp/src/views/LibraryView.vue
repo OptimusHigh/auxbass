@@ -21,25 +21,26 @@
         </div>
         <button class="warning-btn">Подключить</button>
       </div>
-      <!-- Persistent Library Tabs Navigation (always visible across all tabs) -->
+      <!-- Persistent Library Header (always visible across all tabs) -->
       <div class="library-persistent-nav" :class="{ 'search-active': isOverviewSearchOpen }">
-        <!-- Desktop Section Title -->
-        <h1 v-if="!isOverviewSearchOpen" class="library-desktop-title">
-          {{ currentTabTitle }}
-        </h1>
+        <!-- Overview: clean single-line header with title + search -->
+        <template v-if="currentTabId === 'overview' && !isOverviewSearchOpen">
+          <h1 class="library-header-title">Медиатека</h1>
+        </template>
 
-        <!-- Mobile Tabs Navigation Pills -->
-        <div v-if="!isOverviewSearchOpen" class="library-tabs-pills">
-          <button 
-            v-for="t in tabs" 
-            :key="t.id"
-            class="library-tab-pill" 
-            :class="{ active: currentTabId === t.id }"
-            @click="setTab(t.id)"
+        <!-- Subtab: back button + section title -->
+        <template v-else-if="currentTabId !== 'overview'">
+          <button
+            class="library-back-btn"
+            @click="setTab('overview')"
+            title="Назад в медиатеку"
+            aria-label="Назад в медиатеку"
           >
-            <span>{{ t.label }}</span>
+            <ChevronLeft :size="20" />
+            <span>Медиатека</span>
           </button>
-        </div>
+          <h1 class="library-header-title subtab-title">{{ currentTabTitle }}</h1>
+        </template>
 
         <ExpandableSearch
           v-if="currentTabId === 'overview'"
@@ -54,7 +55,94 @@
 
       <!-- Overview Dashboard View without search -->
       <div v-if="currentTabId === 'overview' && !debouncedQuery" class="overview-dashboard">
-        <!-- Section: Плейлисты (Horizontal Scroll) -->
+        <!-- ─── Section 1: Все треки (Вся музыка) ─── -->
+        <section class="library-section tracks-overview-section">
+          <div class="section-header tracks-section-header">
+            <h2
+              class="section-title clickable"
+              @click="setTab('tracks')"
+              title="Перейти во все треки"
+            >
+              Все треки
+              <span v-if="totalTracksCount > 0" class="section-title-count">{{ totalTracksCount }}</span>
+            </h2>
+            <div class="section-actions">
+              <button class="section-link" @click="setTab('tracks')">
+                Все {{ totalTracksCount }} <ChevronRight :size="14" />
+              </button>
+            </div>
+          </div>
+
+          <!-- Shuffle Button Bar -->
+          <div class="overview-actions-bar">
+            <button
+              class="shuffle-all-btn"
+              @click="handleShuffleAll"
+              :disabled="totalTracksCount === 0 || shuffling"
+            >
+              <div v-if="shuffling" class="spinner small"></div>
+              <Shuffle v-else :size="16" class="shuffle-icon" />
+              <span class="shuffle-text">
+                <template v-if="shuffling">Загрузка...</template>
+                <template v-else-if="totalTracksCount > 0">Перемешать ({{ totalTracksCount }})</template>
+                <template v-else>Перемешать</template>
+              </span>
+            </button>
+
+            <button
+              class="import-btn"
+              @click="tasksStore.openImportModal()"
+              title="Импорт музыки из SoundCloud / Spotify"
+            >
+              <CloudDownload :size="16" class="import-icon" />
+              <span class="import-text">Импорт</span>
+            </button>
+          </div>
+
+          <!-- Recent Tracks Preview -->
+          <div v-if="loadingTracks && !overviewTracks.length" class="overview-tracks-loading">
+            <div v-for="i in 6" :key="i" class="track-item-skeleton">
+              <div class="skeleton-thumb"></div>
+              <div class="skeleton-text">
+                <div class="skeleton-line-title"></div>
+                <div class="skeleton-line-sub"></div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="overviewTracks.length > 0" class="overview-tracks-list">
+            <TrackItem
+              v-for="track in overviewTracks.slice(0, 6)"
+              :key="track.id"
+              :track="track"
+              :isPlaying="playerStore.currentTrack?.id === track.id"
+              :isActive="playerStore.isPlaying && playerStore.currentTrack?.id === track.id"
+              :isLiked="track.is_liked"
+              @click="playTrack(track)"
+              @like="handleLikeTrack(track)"
+              @menu="(e) => openMenu('track', track, 'library', e)"
+              @download="handleDirectDownload(track)"
+              @hdNotice="handleHdNotice"
+            />
+
+            <!-- View All Tracks Full Button -->
+            <button
+              v-if="totalTracksCount > 6"
+              class="view-all-tracks-btn"
+              @click="setTab('tracks')"
+            >
+              <span>Показать все треки ({{ totalTracksCount }})</span>
+              <ChevronRight :size="16" />
+            </button>
+          </div>
+
+          <div v-else class="overview-empty-tracks">
+            <Music :size="36" class="empty-icon" />
+            <p>В вашей медиатеке пока нет треков</p>
+          </div>
+        </section>
+
+        <!-- ─── Section 2: Плейлисты (Horizontal Scroll) ─── -->
         <section v-if="loadingPlaylists" class="library-section">
           <div class="section-header">
             <div class="skeleton-section-title"></div>
@@ -70,17 +158,17 @@
 
         <section v-else-if="allPlaylists.length > 0" class="library-section">
           <div class="section-header">
-            <h2 
-              class="section-title clickable" 
+            <h2
+              class="section-title clickable"
               @click="setTab('playlists')"
               title="Перейти в плейлисты"
             >
               Плейлисты
             </h2>
             <div class="section-actions">
-              <button class="section-link" @click="setTab('playlists')">Все {{ allPlaylists.length }}</button>
-              <button 
-                class="scroll-arrow-btn" 
+              <button class="section-link" @click="setTab('playlists')">Все {{ allPlaylists.length }} <ChevronRight :size="14" /></button>
+              <button
+                class="scroll-arrow-btn"
                 :disabled="!playlistsScroll.canScrollLeft.value"
                 @click="playlistsScroll.scroll('left')"
                 title="Назад"
@@ -88,8 +176,8 @@
               >
                 <ChevronLeft :size="16" />
               </button>
-              <button 
-                class="scroll-arrow-btn" 
+              <button
+                class="scroll-arrow-btn"
                 :disabled="!playlistsScroll.canScrollRight.value"
                 @click="playlistsScroll.scroll('right')"
                 title="Вперед"
@@ -99,29 +187,29 @@
               </button>
             </div>
           </div>
-          <div 
+          <div
             class="horizontal-scroll"
             :ref="playlistsScroll.containerRef"
           >
-            <div 
-              v-for="pl in allPlaylists.slice(0, 10)" 
-              :key="pl.id" 
+            <div
+              v-for="pl in allPlaylists.slice(0, 10)"
+              :key="pl.id"
               class="feed-card"
               @click="goTo(`/playlist/${pl.id}`)"
               @contextmenu.prevent="openMenu('playlist', pl, 'library', $event)"
               v-longpress="(e) => openMenu('playlist', pl, 'library', e)"
             >
               <div class="feed-card-cover" :style="getPlaylistCoverStyle(pl)">
-                <img 
-                  v-if="pl.covers?.length" 
-                  :src="getCoverUrl(pl.covers[0], CoverSize.MEDIUM)" 
-                  alt="" 
+                <img
+                  v-if="pl.covers?.length"
+                  :src="getCoverUrl(pl.covers[0], CoverSize.MEDIUM)"
+                  alt=""
                   loading="lazy"
                 />
                 <Folder v-else :size="32" />
-                <button 
-                  v-if="pl.track_count > 0" 
-                  class="play-overlay" 
+                <button
+                  v-if="pl.track_count > 0"
+                  class="play-overlay"
                   @click.stop="handlePlayPlaylist(pl)"
                   title="Слушать"
                 >
@@ -134,7 +222,78 @@
           </div>
         </section>
 
-        <!-- Section: Альбомы (Horizontal Scroll) -->
+        <!-- ─── Section 3: Артисты (Horizontal Scroll with round avatars) ─── -->
+        <section v-if="loadingArtists" class="library-section">
+          <div class="section-header">
+            <div class="skeleton-section-title"></div>
+          </div>
+          <div class="horizontal-scroll">
+            <div v-for="i in 5" :key="i" class="feed-card-skeleton artist-card-skeleton">
+              <div class="skeleton-feed-cover skeleton-circle"></div>
+              <div class="skeleton-feed-title"></div>
+            </div>
+          </div>
+        </section>
+
+        <section v-else-if="overviewArtists.length > 0" class="library-section">
+          <div class="section-header">
+            <h2
+              class="section-title clickable"
+              @click="setTab('artists')"
+              title="Перейти к артистам"
+            >
+              Артисты
+            </h2>
+            <div class="section-actions">
+              <button class="section-link" @click="setTab('artists')">Все {{ artistsTotal || overviewArtists.length }} <ChevronRight :size="14" /></button>
+              <button
+                class="scroll-arrow-btn"
+                :disabled="!artistsScroll.canScrollLeft.value"
+                @click="artistsScroll.scroll('left')"
+                title="Назад"
+                aria-label="Назад"
+              >
+                <ChevronLeft :size="16" />
+              </button>
+              <button
+                class="scroll-arrow-btn"
+                :disabled="!artistsScroll.canScrollRight.value"
+                @click="artistsScroll.scroll('right')"
+                title="Вперед"
+                aria-label="Вперед"
+              >
+                <ChevronRight :size="16" />
+              </button>
+            </div>
+          </div>
+          <div
+            class="horizontal-scroll"
+            :ref="artistsScroll.containerRef"
+          >
+            <div
+              v-for="artist in overviewArtists.slice(0, 10)"
+              :key="artist.name"
+              class="feed-card artist-card"
+              @click="goTo(`/artist/${encodeURIComponent(artist.name)}`)"
+              @contextmenu.prevent="openMenu('artist', artist, 'library', $event)"
+              v-longpress="(e) => openMenu('artist', artist, 'library', e)"
+            >
+              <div class="feed-card-cover artist-cover" :style="getArtistCoverStyle(artist)">
+                <img
+                  v-if="artist.image_url"
+                  :src="getCoverUrl(artist.image_url, CoverSize.MEDIUM)"
+                  alt=""
+                  loading="lazy"
+                />
+                <span v-else class="artist-initials">{{ getArtistInitials(artist) }}</span>
+              </div>
+              <div class="feed-card-title">{{ artist.name }}</div>
+              <div class="feed-card-subtitle">{{ artist.track_count }} треков</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ─── Section 4: Альбомы (Horizontal Scroll) ─── -->
         <section v-if="loadingAlbums" class="library-section">
           <div class="section-header">
             <div class="skeleton-section-title"></div>
@@ -150,17 +309,17 @@
 
         <section v-else-if="overviewAlbums.length > 0" class="library-section">
           <div class="section-header">
-            <h2 
-              class="section-title clickable" 
+            <h2
+              class="section-title clickable"
               @click="setTab('albums')"
               title="Перейти в альбомы"
             >
               Альбомы
             </h2>
             <div class="section-actions">
-              <button class="section-link" @click="setTab('albums')">Все {{ albumsTotal || overviewAlbums.length }}</button>
-              <button 
-                class="scroll-arrow-btn" 
+              <button class="section-link" @click="setTab('albums')">Все {{ albumsTotal || overviewAlbums.length }} <ChevronRight :size="14" /></button>
+              <button
+                class="scroll-arrow-btn"
                 :disabled="!albumsScroll.canScrollLeft.value"
                 @click="albumsScroll.scroll('left')"
                 title="Назад"
@@ -168,8 +327,8 @@
               >
                 <ChevronLeft :size="16" />
               </button>
-              <button 
-                class="scroll-arrow-btn" 
+              <button
+                class="scroll-arrow-btn"
                 :disabled="!albumsScroll.canScrollRight.value"
                 @click="albumsScroll.scroll('right')"
                 title="Вперед"
@@ -179,28 +338,28 @@
               </button>
             </div>
           </div>
-          <div 
+          <div
             class="horizontal-scroll"
             :ref="albumsScroll.containerRef"
           >
-            <div 
-              v-for="album in overviewAlbums.slice(0, 10)" 
-              :key="album.id" 
+            <div
+              v-for="album in overviewAlbums.slice(0, 10)"
+              :key="album.id"
               class="feed-card"
               @click="goTo(`/album/${album.id}`)"
               @contextmenu.prevent="openMenu('album', album, 'library', $event)"
               v-longpress="(e) => openMenu('album', album, 'library', e)"
             >
               <div class="feed-card-cover">
-                <img 
-                  v-if="album.cover_url" 
-                  :src="getCoverUrl(album.cover_url, CoverSize.MEDIUM)" 
-                  alt="" 
+                <img
+                  v-if="album.cover_url"
+                  :src="getCoverUrl(album.cover_url, CoverSize.MEDIUM)"
+                  alt=""
                   loading="lazy"
                 />
                 <Disc3 v-else :size="32" />
-                <button 
-                  class="play-overlay" 
+                <button
+                  class="play-overlay"
                   @click.stop="handlePlayAlbum(album)"
                   title="Слушать альбом"
                 >
@@ -210,161 +369,6 @@
               <div class="feed-card-title">{{ album.name }}</div>
               <div class="feed-card-subtitle">{{ album.artist || 'Альбом' }}</div>
             </div>
-          </div>
-        </section>
-
-        <!-- Section: Исполнители (Horizontal Scroll with round avatars) -->
-        <section v-if="loadingArtists" class="library-section">
-          <div class="section-header">
-            <div class="skeleton-section-title"></div>
-          </div>
-          <div class="horizontal-scroll">
-            <div v-for="i in 5" :key="i" class="feed-card-skeleton artist-card-skeleton">
-              <div class="skeleton-feed-cover skeleton-circle"></div>
-              <div class="skeleton-feed-title"></div>
-            </div>
-          </div>
-        </section>
-
-        <section v-else-if="overviewArtists.length > 0" class="library-section">
-          <div class="section-header">
-            <h2 
-              class="section-title clickable" 
-              @click="setTab('artists')"
-              title="Перейти к артистам"
-            >
-              Исполнители
-            </h2>
-            <div class="section-actions">
-              <button class="section-link" @click="setTab('artists')">Все {{ artistsTotal || overviewArtists.length }}</button>
-              <button 
-                class="scroll-arrow-btn" 
-                :disabled="!artistsScroll.canScrollLeft.value"
-                @click="artistsScroll.scroll('left')"
-                title="Назад"
-                aria-label="Назад"
-              >
-                <ChevronLeft :size="16" />
-              </button>
-              <button 
-                class="scroll-arrow-btn" 
-                :disabled="!artistsScroll.canScrollRight.value"
-                @click="artistsScroll.scroll('right')"
-                title="Вперед"
-                aria-label="Вперед"
-              >
-                <ChevronRight :size="16" />
-              </button>
-            </div>
-          </div>
-          <div 
-            class="horizontal-scroll"
-            :ref="artistsScroll.containerRef"
-          >
-            <div 
-              v-for="artist in overviewArtists.slice(0, 10)" 
-              :key="artist.name" 
-              class="feed-card artist-card"
-              @click="goTo(`/artist/${encodeURIComponent(artist.name)}`)"
-              @contextmenu.prevent="openMenu('artist', artist, 'library', $event)"
-              v-longpress="(e) => openMenu('artist', artist, 'library', e)"
-            >
-              <div class="feed-card-cover artist-cover" :style="getArtistCoverStyle(artist)">
-                <img 
-                  v-if="artist.image_url" 
-                  :src="getCoverUrl(artist.image_url, CoverSize.MEDIUM)" 
-                  alt="" 
-                  loading="lazy"
-                />
-                <span v-else class="artist-initials">{{ getArtistInitials(artist) }}</span>
-              </div>
-              <div class="feed-card-title">{{ artist.name }}</div>
-              <div class="feed-card-subtitle">{{ artist.track_count }} треков</div>
-            </div>
-          </div>
-        </section>
-
-        <!-- Section: Треки (With Shuffle Button and TrackItems) -->
-        <section class="library-section tracks-overview-section">
-          <div class="section-header">
-            <h2 
-              class="section-title clickable" 
-              @click="setTab('tracks')"
-              title="Перейти во все треки"
-            >
-              Треки
-            </h2>
-            <button class="section-link" @click="setTab('tracks')">
-              Все {{ totalTracksCount }}
-            </button>
-          </div>
-
-          <!-- Shuffle Button Bar -->
-          <div class="overview-actions-bar">
-            <button 
-              class="shuffle-all-btn" 
-              @click="handleShuffleAll" 
-              :disabled="totalTracksCount === 0 || shuffling"
-            >
-              <div v-if="shuffling" class="spinner small"></div>
-              <Shuffle v-else :size="16" class="shuffle-icon" />
-              <span class="shuffle-text">
-                <template v-if="shuffling">Загрузка...</template>
-                <template v-else-if="totalTracksCount > 0">Перемешать ({{ totalTracksCount }})</template>
-                <template v-else>Перемешать</template>
-              </span>
-            </button>
-
-            <button 
-              class="import-btn" 
-              @click="tasksStore.openImportModal()"
-              title="Импорт музыки из SoundCloud / Spotify"
-            >
-              <CloudDownload :size="16" class="import-icon" />
-              <span class="import-text">Импорт</span>
-            </button>
-          </div>
-
-          <!-- Recent Tracks List -->
-          <div v-if="loadingTracks && !overviewTracks.length" class="overview-tracks-loading">
-            <div v-for="i in 6" :key="i" class="track-item-skeleton">
-              <div class="skeleton-thumb"></div>
-              <div class="skeleton-text">
-                <div class="skeleton-line-title"></div>
-                <div class="skeleton-line-sub"></div>
-              </div>
-            </div>
-          </div>
-
-          <div v-else-if="overviewTracks.length > 0" class="overview-tracks-list">
-            <TrackItem
-              v-for="track in overviewTracks.slice(0, 15)"
-              :key="track.id"
-              :track="track"
-              :isPlaying="playerStore.currentTrack?.id === track.id"
-              :isActive="playerStore.isPlaying && playerStore.currentTrack?.id === track.id"
-              :isLiked="track.is_liked"
-              @click="playTrack(track)"
-              @like="handleLikeTrack(track)"
-              @menu="(e) => openMenu('track', track, 'library', e)"
-              @download="handleDirectDownload(track)"
-              @hdNotice="handleHdNotice"
-            />
-
-            <!-- View All Tracks Full Button -->
-            <button 
-              v-if="totalTracksCount > 15" 
-              class="view-all-tracks-btn" 
-              @click="setTab('tracks')"
-            >
-              <span>Смотреть все треки ({{ totalTracksCount }})</span>
-              <ChevronRight :size="16" />
-            </button>
-          </div>
-
-          <div v-else class="overview-empty-tracks">
-            <Music :size="36" class="empty-icon" />
-            <p>В вашей медиатеке пока нет треков</p>
           </div>
         </section>
       </div>
@@ -862,30 +866,21 @@ onUnmounted(() => {
   justify-content: stretch;
 }
 
-.library-desktop-title {
-  display: none;
+.library-header-title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--c-text-1, #fff);
+  margin: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.library-tabs-pills {
+.library-header-title.subtab-title {
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-  scroll-padding-inline: 4px;
-  padding-block: 6px;
-  margin-block: -6px;
-  padding-inline: 2px 12px;
-  margin-inline: 0;
-  mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 24px), transparent 100%);
-}
-
-.library-tabs-pills::-webkit-scrollbar {
-  display: none;
 }
 
 .library-persistent-nav :deep(.expandable-search-container) {
@@ -893,59 +888,45 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-@media (min-width: 1024px) {
-  .library-tabs-pills {
-    display: none;
-  }
+.library-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--c-text-1, #fff);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  user-select: none;
+}
 
-  .library-desktop-title {
-    display: block;
+.library-back-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateX(-1px);
+}
+
+.library-back-btn:active {
+  transform: scale(0.96);
+}
+
+@media (min-width: 1024px) {
+  .library-header-title {
     font-size: 28px;
-    font-weight: 800;
-    letter-spacing: -0.5px;
-    color: var(--c-text-1, #fff);
-    margin: 0;
-    line-height: 1.2;
     padding-top: 8px;
     margin-bottom: 8px;
   }
 
-  .subtab-header {
-    display: none;
+  .library-back-btn {
+    margin-top: 4px;
+    margin-bottom: 4px;
   }
-}
-
-.library-tab-pill {
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 600;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--c-text-2, rgba(255, 255, 255, 0.75));
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
-  flex-shrink: 0;
-  user-select: none;
-}
-
-.library-tab-pill:hover {
-  background: rgba(255, 255, 255, 0.14);
-  color: var(--c-text-1, #fff);
-  transform: translateY(-1px);
-}
-
-.library-tab-pill:active {
-  transform: scale(0.96);
-}
-
-.library-tab-pill.active {
-  background: var(--c-accent, #1db954);
-  color: #000;
-  border-color: var(--c-accent, #1db954);
-  font-weight: 700;
-  box-shadow: 0 2px 12px rgba(29, 185, 84, 0.35);
 }
 
 /* ─── Sections ─── */
@@ -1035,6 +1016,14 @@ onUnmounted(() => {
 
 .section-title.clickable:hover {
   color: var(--c-accent, #1db954);
+}
+
+.section-title-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-3, rgba(255, 255, 255, 0.5));
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .section-actions {
