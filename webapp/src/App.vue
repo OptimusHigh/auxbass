@@ -13,10 +13,11 @@
       <!-- Main Content Wrapper -->
       <div class="main-content-wrapper">
         <!-- Header for authenticated pages (mobile + desktop detail pages) -->
-        <PageHeader 
+        <PageHeader
           v-if="showHeader"
           :title="pageTitle"
           :showBack="showBackButton"
+          :class="{ 'library-overview-header': route.name === 'library' && libraryTabId === 'overview' }"
           @goBack="goBack"
         >
           <template v-if="route.name === 'library' && libraryTabId === 'overview'" #icon>
@@ -1325,6 +1326,11 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+.library-overview-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .header-action-btn {
