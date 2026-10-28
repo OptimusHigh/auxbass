@@ -25,6 +25,7 @@ from api.services.minecraft_pack import (
     base_pack_uuid,
     get_base_pack_meta,
     get_base_pack_sha1,
+    get_deleted_track_ids,
     build_base_pack,
     BASE_PACK_FILENAME,
 )
@@ -52,6 +53,18 @@ def _extract_cover_ref(tr) -> Optional[str]:
     if enr and getattr(enr, "cover_url", None):
         return enr.cover_url
     return None
+
+
+def _uploader_name(tr) -> Optional[str]:
+    """Best-effort resolve of the author's display name (Minecraft nick / Telegram name)."""
+    uploader = getattr(tr, "uploader", None)
+    if uploader is None:
+        return None
+    name = getattr(uploader, "display_name", None)
+    if name:
+        return name
+    username = getattr(uploader, "username", None)
+    return username or None
 
 
 class EnsureUserRequest(BaseModel):
@@ -84,6 +97,7 @@ class TrackManifestItem(BaseModel):
     track_id: int
     title: str
     artist: Optional[str] = None
+    uploader_name: Optional[str] = None
     duration: Optional[int] = None
     file_id: Optional[str] = None
     pack_uuid: str
@@ -238,7 +252,8 @@ async def get_minecraft_playlist(
     server_pts = (await db.execute(
         select(PlaylistTrack)
         .where(PlaylistTrack.playlist_id == server_pl.id)
-        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment))
+        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment),
+                 selectinload(PlaylistTrack.track).selectinload(Track.uploader))
         .order_by(PlaylistTrack.position)
     )).scalars().all()
 
@@ -246,7 +261,8 @@ async def get_minecraft_playlist(
     user_pts = (await db.execute(
         select(PlaylistTrack)
         .where(PlaylistTrack.playlist_id == pl.id)
-        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment))
+        .options(selectinload(PlaylistTrack.track).selectinload(Track.enrichment),
+                 selectinload(PlaylistTrack.track).selectinload(Track.uploader))
         .order_by(PlaylistTrack.position)
     )).scalars().all()
 
@@ -276,6 +292,7 @@ async def get_minecraft_playlist(
             track_id=tr.id,
             title=tr.title or f"Track {tr.id}",
             artist=tr.artist,
+            uploader_name=_uploader_name(tr),
             duration=tr.duration,
             file_id=tr.file_id,
             pack_uuid=puuid,
@@ -313,7 +330,7 @@ def _minecraft_tracks_stmt():
         .where(Track.is_unavailable == False)  # noqa: E712
         .where(~Track.file_id.startswith("lazy:"))
         .where(~Track.file_id.startswith("pending:"))
-        .options(selectinload(Track.enrichment))
+        .options(selectinload(Track.enrichment), selectinload(Track.uploader))
         .distinct()
         .order_by(Track.id)
     )
@@ -445,8 +462,12 @@ async def get_sync_manifest(
             "track_count": len(base_track_ids),
         }
 
+    deleted_track_ids = get_deleted_track_ids()
+
     deltas = []
     for tr in all_tracks:
+        if tr.id in deleted_track_ids:
+            continue  # deleted by author, do not serve
         if tr.id not in base_track_ids:
             sha1 = get_cached_sha1(tr.id)
             if not sha1:
@@ -465,6 +486,7 @@ async def get_sync_manifest(
                     "track_id": tr.id,
                     "title": tr.title or f"Track {tr.id}",
                     "artist": tr.artist,
+                    "uploader_name": _uploader_name(tr),
                     "duration": tr.duration,
                     "file_id": tr.file_id,
                     "pack_uuid": str(pack_uuid_for_track(tr.id)),
@@ -475,6 +497,7 @@ async def get_sync_manifest(
     return {
         "base_pack": base_pack_info,
         "deltas": deltas,
+        "deleted_track_ids": sorted(deleted_track_ids),
         "total_tracks": len(all_tracks),
     }
 
@@ -551,9 +574,9 @@ async def get_manifest_batch(
             if not sha1 and tr.file_id and not tr.file_id.startswith("lazy:") and not tr.file_id.startswith("pending:"):
                 try:
                     res = await ensure_pack_for_track(
-                        tr.id, tr.file_id, tr.title or "", 
-                        duration=tr.duration, 
-                        image_file_id=_extract_image_file_id(tr)
+                        tr.id, tr.file_id, tr.title or "",
+                        duration=tr.duration,
+                        cover_ref=_extract_cover_ref(tr)
                     )
                     if res:
                         _, sha1 = res
@@ -563,6 +586,7 @@ async def get_manifest_batch(
                 "track_id": tr.id,
                 "title": tr.title,
                 "artist": tr.artist,
+                "uploader_name": _uploader_name(tr),
                 "duration": tr.duration,
                 "pack_uuid": str(pack_uuid_for_track(tr.id)),
                 "pack_url": f"{base_url}/api/minecraft/packs/{tr.id}.zip",

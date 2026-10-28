@@ -1161,6 +1161,17 @@ async def remove_track_from_playlist(
     playlist.updated_at = utcnow()
     await db.delete(pt)
     await db.commit()
+
+    # For Minecraft playlists, mark the track as deleted so the mod can invalidate
+    # existing discs lazily (no daytime base-pack rebuild). The micro-pack is removed
+    # immediately; the base pack is pruned during the nightly 04:00 consolidation.
+    is_mc = bool(getattr(playlist, "is_system", False) or getattr(playlist, "system_type", None) in ("minecraft", "minecraft_main"))
+    if is_mc:
+        try:
+            from api.services.minecraft_pack import record_deleted_track
+            record_deleted_track(track_id)
+        except Exception as e:
+            logger.warning(f"Failed to record deleted Minecraft track {track_id}: {e}")
     
     return {"status": "removed"}
 

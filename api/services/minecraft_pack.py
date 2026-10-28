@@ -88,6 +88,11 @@ BASE_PACK_FILENAME = PACKS_DIR / "base_pack.zip"
 BASE_PACK_SHA1_PATH = PACKS_DIR / "base_pack.sha1"
 BASE_PACK_META_PATH = PACKS_DIR / "base_pack_meta.json"
 
+# Persistent registry of track IDs deleted by their authors.
+# Stored inside base_pack_meta.json under "deleted_track_ids" so the mod can
+# invalidate physical discs lazily without a daytime base-pack rebuild.
+DELETED_TRACK_IDS_META_KEY = "deleted_track_ids"
+
 
 def base_pack_uuid() -> uuid.UUID:
     """
@@ -119,6 +124,43 @@ def get_base_pack_sha1() -> Optional[str]:
         except Exception:
             pass
     return None
+
+
+def get_deleted_track_ids() -> set[int]:
+    """Return the set of track IDs that have been deleted by their authors."""
+    meta = get_base_pack_meta()
+    raw = meta.get(DELETED_TRACK_IDS_META_KEY, [])
+    out = set()
+    for v in raw:
+        try:
+            out.add(int(v))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def record_deleted_track(track_id: int) -> None:
+    """Mark a track as deleted, persisting to base_pack_meta.json.
+
+    This intentionally does NOT rebuild the base pack during the day (to avoid
+    forcing all clients to re-download a large archive). The nightly 04:00
+    consolidation will prune deleted IDs from the actual base pack zip.
+    """
+    try:
+        meta = get_base_pack_meta()
+        deleted = set(get_deleted_track_ids())
+        deleted.add(int(track_id))
+        meta[DELETED_TRACK_IDS_META_KEY] = sorted(deleted)
+        # Also drop from track_ids immediately so /sync-manifest stops serving it as a delta
+        meta["track_ids"] = [tid for tid in meta.get("track_ids", []) if tid not in deleted]
+        tmp = BASE_PACK_META_PATH.with_suffix(".tmp.json")
+        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(BASE_PACK_META_PATH)
+        # Remove the micro-pack so it is no longer downloadable
+        invalidate_pack(int(track_id))
+        logger.info(f"[MinecraftPack] Recorded deleted track {track_id}")
+    except Exception as e:
+        logger.error(f"[MinecraftPack] Failed to record deleted track {track_id}: {e}")
 
 
 
@@ -614,7 +656,7 @@ def invalidate_pack(track_id: int):
             pass
 
 
-async def build_base_pack(track_items: list[dict]) -> Optional[tuple[bytes, str, list[int]]]:
+async def build_base_pack(track_items: list[dict]) -> Optional[tuple[Optional[bytes], str, list[int]]]:
     """
     Build unified Base Music Pack combining given tracks.
     Each item in track_items has: id, file_id, title, duration, cover_ref.
@@ -644,13 +686,20 @@ async def build_base_pack(track_items: list[dict]) -> Optional[tuple[bytes, str,
                 except Exception as e:
                     logger.warning(f"Failed to ensure pack for track {tr_id} while building base pack: {e}")
 
-    # 2. Build master zip
-    buf = io.BytesIO()
+    # 2. Build master zip directly to a temp file on disk (avoids loading the
+    #    whole archive into RAM — important for large 500+ MB base packs).
     merged_sounds = {}
     included_ids = []
     first_icon = None
 
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as master_zip:
+    tmp_zip = BASE_PACK_FILENAME.with_suffix(".tmp.zip")
+    # Ensure a clean start; remove any stale temp file.
+    try:
+        tmp_zip.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as master_zip:
         mcmeta = {
             "pack": {
                 "pack_format": PACK_FORMAT_MAJOR,
@@ -693,28 +742,43 @@ async def build_base_pack(track_items: list[dict]) -> Optional[tuple[bytes, str,
         # Write unified sounds.json
         master_zip.writestr("assets/ganjacraft/sounds.json", json.dumps(merged_sounds, ensure_ascii=False))
 
-    zip_bytes = buf.getvalue()
-    if not zip_bytes or not included_ids:
+    if not included_ids:
         logger.error("Base pack build resulted in 0 tracks")
+        try:
+            tmp_zip.unlink(missing_ok=True)
+        except Exception:
+            pass
         return None
 
-    sha1 = _compute_sha1(zip_bytes)
+    # 3. Stream-compute SHA-1 from the temp file (no full-file load into RAM).
+    sha1 = hashlib.sha1()
+    with open(tmp_zip, "rb") as fh:
+        while True:
+            chunk = fh.read(1024 * 1024)
+            if not chunk:
+                break
+            sha1.update(chunk)
+    sha1_hex = sha1.hexdigest()
 
-    # Atomic write to disk
-    tmp_zip = BASE_PACK_FILENAME.with_suffix(".tmp.zip")
-    tmp_zip.write_bytes(zip_bytes)
+    # 4. Atomic swap into place.
     tmp_zip.replace(BASE_PACK_FILENAME)
-    BASE_PACK_SHA1_PATH.write_text(sha1, encoding="utf-8")
+    BASE_PACK_SHA1_PATH.write_text(sha1_hex, encoding="utf-8")
+
+    included_set = set(included_ids)
+    # Preserve previously-deleted IDs that are still absent (remain deleted).
+    # Drop any deleted ID that somehow reappeared (e.g. re-uploaded and re-added).
+    deleted = get_deleted_track_ids() - included_set
 
     meta = {
         "track_ids": included_ids,
         "built_at": int(time.time()),
-        "sha1": sha1,
+        "sha1": sha1_hex,
         "track_count": len(included_ids),
+        DELETED_TRACK_IDS_META_KEY: sorted(deleted),
     }
     BASE_PACK_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info(f"Successfully built Base Music Pack: {len(included_ids)} tracks, {len(zip_bytes)} bytes, sha1={sha1[:8]}")
-    return zip_bytes, sha1, included_ids
+    logger.info(f"Successfully built Base Music Pack: {len(included_ids)} tracks, sha1={sha1_hex[:8]}")
+    return None, sha1_hex, included_ids
 
 
 def extract_cover_ref(tr) -> Optional[str]:
@@ -772,12 +836,18 @@ async def _nightly_rebuild_loop():
                     .order_by(Track.id)
                 )
                 all_tracks = (await db.execute(stmt)).scalars().all()
+                current_track_ids = {t.id for t in all_tracks}
                 new_tracks = [t for t in all_tracks if t.id not in base_track_ids]
+                removed_track_ids = base_track_ids - current_track_ids
 
-                if not new_tracks and BASE_PACK_FILENAME.exists() and get_base_pack_sha1():
-                    logger.info("[MinecraftPack] Nightly check: 0 new tracks, Base Pack is already up to date.")
+                # Rebuild if there are NEW tracks OR REMOVED tracks (deletions must also prune base pack).
+                needs_rebuild = bool(new_tracks or removed_track_ids)
+                if not needs_rebuild and BASE_PACK_FILENAME.exists() and get_base_pack_sha1():
+                    logger.info("[MinecraftPack] Nightly check: 0 new/removed tracks, Base Pack is already up to date.")
                     continue
 
+                if removed_track_ids:
+                    logger.info(f"[MinecraftPack] Nightly check: pruning {len(removed_track_ids)} removed tracks from Base Pack: {sorted(removed_track_ids)}")
                 logger.info(f"[MinecraftPack] Nightly check: consolidating {len(new_tracks)} new tracks ({len(all_tracks)} total) into Base Pack...")
                 track_items = [
                     {
