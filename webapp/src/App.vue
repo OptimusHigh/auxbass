@@ -434,8 +434,9 @@ const showHeader = computed(() => {
     const detailRoutes = ['album-detail', 'artist-detail', 'playlist-detail']
     return authStore.isAuthenticated && detailRoutes.includes(route.name)
   }
-  // On mobile, show header for all pages except login
-  const noHeaderRoutes = ['login']
+  // On mobile, show header for all pages except login and library
+  // (LibraryView manages its own compact header to avoid title duplication)
+  const noHeaderRoutes = ['login', 'library']
   return authStore.isAuthenticated && !noHeaderRoutes.includes(route.name)
 })
 

@@ -21,38 +21,6 @@
         </div>
         <button class="warning-btn">Подключить</button>
       </div>
-      <!-- Persistent Library Header (always visible across all tabs) -->
-      <div class="library-persistent-nav" :class="{ 'search-active': isOverviewSearchOpen }">
-        <!-- Overview: clean single-line header with title + search -->
-        <template v-if="currentTabId === 'overview' && !isOverviewSearchOpen">
-          <h1 class="library-header-title">Медиатека</h1>
-        </template>
-
-        <!-- Subtab: back button + section title -->
-        <template v-else-if="currentTabId !== 'overview'">
-          <button
-            class="library-back-btn"
-            @click="setTab('overview')"
-            title="Назад в медиатеку"
-            aria-label="Назад в медиатеку"
-          >
-            <ChevronLeft :size="20" />
-            <span>Медиатека</span>
-          </button>
-          <h1 class="library-header-title subtab-title">{{ currentTabTitle }}</h1>
-        </template>
-
-        <ExpandableSearch
-          v-if="currentTabId === 'overview'"
-          v-model="searchQuery"
-          v-model:open="isOverviewSearchOpen"
-          :placeholder="searchPlaceholder"
-          title="Поиск по медиатеке"
-          @input="debouncedSearch"
-          @clear="handleClearSearch"
-        />
-      </div>
-
       <!-- Overview Dashboard View without search -->
       <div v-if="currentTabId === 'overview' && !debouncedQuery" class="overview-dashboard">
         <!-- ─── Section 1: Все треки (Вся музыка) ─── -->
@@ -97,6 +65,16 @@
               <CloudDownload :size="16" class="import-icon" />
               <span class="import-text">Импорт</span>
             </button>
+
+            <ExpandableSearch
+              v-model="searchQuery"
+              v-model:open="isOverviewSearchOpen"
+              placeholder="Название или исполнитель..."
+              title="Поиск по медиатеке"
+              class="overview-search"
+              @input="onOverviewSearchInput"
+              @clear="handleClearSearch"
+            />
           </div>
 
           <!-- Recent Tracks Preview -->
@@ -375,10 +353,13 @@
 
       <!-- Specific Tab or Search Active View -->
       <div v-else class="library-content">
-        <component 
-          :is="currentTabComponent" 
+        <component
+          :is="currentTabComponent"
           :searchQuery="currentTabId === 'overview' ? debouncedQuery : searchQuery"
           :hideToolbar="currentTabId === 'overview'"
+          :title="currentTabTitle"
+          :showBack="currentTabId !== 'overview'"
+          @back="setTab('overview')"
           @update:searchQuery="handleSubtabSearch"
         />
       </div>
@@ -531,6 +512,16 @@ const handleSubtabSearch = (query) => {
   // When a subtab updates its search query, sync searchQuery without triggering parent debounce echo
   if (currentTabId.value !== 'overview') {
     searchQuery.value = query || ''
+  }
+}
+
+// Overview search: debounce then switch into tracks view with the query
+const onOverviewSearchInput = () => {
+  const trimmed = (searchQuery.value || '').trim()
+  debouncedSearch()
+  if (trimmed && currentTabId.value === 'overview') {
+    // Switch to tracks subtab to display results as user types
+    currentTabId.value = 'tracks'
   }
 }
 
@@ -795,7 +786,6 @@ onUnmounted(() => {
 
 <style scoped>
 .library-view {
-  --library-nav-height: 58px;
   padding: 0 0 32px var(--content-padding, 16px);
   width: 100%;
   max-width: 100%;
@@ -805,127 +795,6 @@ onUnmounted(() => {
 @media (min-width: 768px) {
   .library-view {
     padding: 0 0 32px var(--content-padding, 24px);
-  }
-}
-
-@media (min-width: 1024px) {
-  .library-view {
-    --library-nav-height: 0px;
-  }
-}
-
-/* ─── Persistent Library Tabs Navigation ─── */
-.library-persistent-nav {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  padding-right: var(--content-padding, 16px);
-  box-sizing: border-box;
-  /* ─── STICKY HEADER FIX: flush to ceiling without parent padding gap ─── */
-  position: sticky;
-  top: 0;
-  z-index: 26;
-  margin-left: calc(-1 * var(--content-padding, 16px));
-  padding-left: var(--content-padding, 16px);
-  padding-top: 14px;
-  padding-bottom: 10px;
-  margin-bottom: 16px;
-  background: rgba(14, 16, 16, 0.88);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  width: calc(100% + var(--content-padding, 16px));
-}
-
-@media (min-width: 768px) {
-  .library-persistent-nav {
-    margin-left: calc(-1 * var(--content-padding, 24px));
-    padding-left: var(--content-padding, 24px);
-    padding-right: var(--content-padding, 24px);
-    width: calc(100% + var(--content-padding, 24px));
-  }
-}
-
-@media (min-width: 1024px) {
-  .library-persistent-nav {
-    position: relative;
-    top: auto;
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    border-bottom: none;
-    padding-top: 16px;
-    padding-bottom: 12px;
-    margin-bottom: 12px;
-  }
-}
-
-.library-persistent-nav.search-active {
-  justify-content: stretch;
-}
-
-.library-header-title {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
-  color: var(--c-text-1, #fff);
-  margin: 0;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.library-header-title.subtab-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.library-persistent-nav :deep(.expandable-search-container) {
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
-.library-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: var(--c-text-1, #fff);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
-  user-select: none;
-}
-
-.library-back-btn:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateX(-1px);
-}
-
-.library-back-btn:active {
-  transform: scale(0.96);
-}
-
-@media (min-width: 1024px) {
-  .library-header-title {
-    font-size: 28px;
-    padding-top: 8px;
-    margin-bottom: 8px;
-  }
-
-  .library-back-btn {
-    margin-top: 4px;
-    margin-bottom: 4px;
   }
 }
 
@@ -965,38 +834,6 @@ onUnmounted(() => {
   .tracks-overview-section,
   .library-content {
     padding-right: var(--content-padding, 24px);
-  }
-}
-
-/* ─── Controls Bar Sticky Coordination ─── */
-:deep(.library-toolbar) {
-  position: sticky;
-  top: var(--library-nav-height, 58px);
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  padding: 12px 16px;
-  margin-inline: -16px;
-  margin-bottom: 14px;
-  background: rgba(14, 16, 16, 0.88);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-@media (min-width: 768px) {
-  :deep(.library-toolbar) {
-    padding: 12px 24px;
-    margin-inline: -24px;
-  }
-}
-
-@media (min-width: 1024px) {
-  :deep(.library-toolbar) {
-    top: 0;
   }
 }
 
@@ -1262,6 +1099,11 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.overview-actions-bar .overview-search {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .import-btn {

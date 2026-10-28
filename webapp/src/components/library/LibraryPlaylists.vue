@@ -10,6 +10,20 @@
 
     <!-- Action Bar: Sort & Create Controls + Expandable Search -->
     <div v-if="!hideToolbar" class="library-toolbar" :class="{ 'search-active': isSearchOpen }">
+      <!-- Back button + section title -->
+      <div v-if="showBack || title" class="toolbar-title">
+        <button
+          v-if="showBack"
+          class="toolbar-back-btn"
+          @click="emit('back')"
+          title="Назад в медиатеку"
+          aria-label="Назад в медиатеку"
+        >
+          <ChevronLeft :size="18" />
+        </button>
+        <h1 v-if="title" class="toolbar-heading">{{ title }}</h1>
+      </div>
+
       <!-- Sort & Action controls (hidden when search is open) -->
       <div v-if="!isSearchOpen" class="toolbar-controls">
         <SortChips
@@ -154,7 +168,7 @@ import ExpandableSearch from '@/components/ui/ExpandableSearch.vue'
 import VirtualGrid from '@/components/VirtualGrid.vue'
 import InfoBanner from '@/components/InfoBanner.vue'
 import api from '@/api/client'
-import { Plus, FileText, Music, Search } from 'lucide-vue-next'
+import { Plus, FileText, Music, Search, ChevronLeft } from 'lucide-vue-next'
 import { getCoverUrl, CoverSize } from '@/utils'
 
 // Universal context menu
@@ -162,6 +176,10 @@ const { openMenu } = useContextMenu()
 
 const props = defineProps({
   searchQuery: {
+    type: String,
+    default: ''
+  },
+  title: {
     type: String,
     default: ''
   },
@@ -504,7 +522,7 @@ defineExpose({
 
 .library-toolbar {
   position: sticky;
-  top: var(--library-nav-height, 58px);
+  top: 0;
   z-index: 25;
   display: flex;
   align-items: center;
@@ -527,14 +545,61 @@ defineExpose({
   }
 }
 
-@media (min-width: 1024px) {
-  .library-toolbar {
-    top: 0;
-  }
-}
-
 .library-toolbar.search-active {
   justify-content: stretch;
+}
+
+.toolbar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.toolbar-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--c-text-1, #fff);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+  user-select: none;
+}
+
+.toolbar-back-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: scale(1.05);
+}
+
+.toolbar-back-btn:active {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.toolbar-heading {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--c-text-1, #fff);
+  margin: 0;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 1024px) {
+  .toolbar-heading {
+    font-size: 24px;
+  }
 }
 
 .toolbar-controls {
