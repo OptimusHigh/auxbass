@@ -293,6 +293,12 @@ defineExpose({
   min-width: 0;
 }
 
+@media (max-width: 767px) {
+  .toolbar-title {
+    display: none;
+  }
+}
+
 .toolbar-back-btn {
   display: inline-flex;
   align-items: center;

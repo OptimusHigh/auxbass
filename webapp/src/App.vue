@@ -19,10 +19,28 @@
           :showBack="showBackButton"
           @goBack="goBack"
         >
-          <template v-if="route.name === 'library'" #icon>
+          <template v-if="route.name === 'library' && libraryTabId === 'overview'" #icon>
             <component :is="libraryIcon" :size="20" />
           </template>
           <template #actions>
+            <button
+              v-if="route.name === 'library' && libraryTabId === 'overview' && !isDesktop"
+              class="header-action-btn"
+              @click="tasksStore.openImportModal()"
+              title="Импорт музыки из SoundCloud / Spotify"
+              aria-label="Импорт музыки"
+            >
+              <CloudDownload :size="18" />
+            </button>
+            <button
+              v-if="route.name === 'library' && libraryTabId === 'overview' && !isDesktop"
+              class="header-action-btn"
+              @click="openLibrarySearch"
+              title="Поиск по медиатеке"
+              aria-label="Поиск по медиатеке"
+            >
+              <Search :size="18" />
+            </button>
             <button
               v-if="authStore.user && !isDesktop"
               class="header-profile-btn"
@@ -262,7 +280,7 @@ import { usePullToRefresh } from '@/composables/usePullToRefresh'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useWelcomeGuide } from '@/composables/useWelcomeGuide'
 import { initAppUpdateListeners } from '@/composables/useAppUpdate'
-import { Library } from 'lucide-vue-next'
+import { Library, CloudDownload, Search } from 'lucide-vue-next'
 import { tracksApi } from '@/api/client'
 import { useContextMenu } from '@/composables/useContextMenu'
 
@@ -434,14 +452,17 @@ const showHeader = computed(() => {
     const detailRoutes = ['album-detail', 'artist-detail', 'playlist-detail']
     return authStore.isAuthenticated && detailRoutes.includes(route.name)
   }
-  // On mobile, show header for all pages except login and library
-  // (LibraryView manages its own compact header to avoid title duplication)
-  const noHeaderRoutes = ['login', 'library']
+  // On mobile, show header for all authenticated pages except login
+  const noHeaderRoutes = ['login']
   return authStore.isAuthenticated && !noHeaderRoutes.includes(route.name)
 })
 
 const showBackButton = computed(() => {
   if (route.name === 'search' && (route.query.tab || route.query.mode)) {
+    return true
+  }
+  // Library subtabs need a back button on mobile (header shows back + title)
+  if (route.name === 'library' && libraryTabId.value !== 'overview') {
     return true
   }
   // Main navigation tabs do not need a back button
@@ -462,9 +483,16 @@ const pageTitle = computed(() => {
     }
     return 'Поиск'
   }
-  // Для страницы библиотеки заголовок стабилен — «Медиатека»
+  // Для страницы библиотеки заголовок зависит от активного подраздела
   if (route.name === 'library') {
-    return 'Медиатека'
+    const libraryTitles = {
+      tracks: 'Все треки',
+      playlists: 'Плейлисты',
+      albums: 'Альбомы',
+      artists: 'Артисты',
+      overview: 'Медиатека',
+    }
+    return libraryTitles[libraryTabId.value] || 'Медиатека'
   }
   
   const titles = {
@@ -486,6 +514,12 @@ const pageTitle = computed(() => {
 })
 
 const libraryIcon = computed(() => Library)
+
+const libraryTabId = computed(() => uiStore.libraryTab || 'overview')
+
+const openLibrarySearch = () => {
+  router.push({ path: '/library', query: { tab: 'tracks' } })
+}
 
 const userInitials = computed(() => {
   const name = authStore.userDisplayName
@@ -1291,6 +1325,32 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+.header-action-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--c-bg-2, #1a1a1a);
+  color: var(--c-text-2, #b0b0b0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 3px 3px 6px var(--sh-dark, rgba(0, 0, 0, 0.4)), -2px -2px 5px var(--sh-light, rgba(255, 255, 255, 0.03));
+  transition: all 0.15s ease;
+}
+
+.header-action-btn:hover {
+  color: var(--c-accent, #1db954);
+  transform: scale(1.05);
+}
+
+.header-action-btn:active {
+  transform: scale(0.95);
+  box-shadow: inset 2px 2px 4px var(--sh-inset-dark, rgba(0, 0, 0, 0.5)), inset -2px -2px 4px var(--sh-inset-light, rgba(255, 255, 255, 0.02));
 }
 
 .header-avatar-badge {

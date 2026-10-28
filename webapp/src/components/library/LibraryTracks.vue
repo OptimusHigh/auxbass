@@ -14,6 +14,7 @@
           <ChevronLeft :size="18" />
         </button>
         <h1 v-if="title" class="toolbar-heading">{{ title }}</h1>
+        <span v-if="title && total > 0" class="toolbar-count">{{ total }}</span>
       </div>
 
       <!-- Left action controls (hidden when search is open) -->
@@ -23,7 +24,6 @@
           <Shuffle v-else :size="16" class="shuffle-icon" />
           <span class="shuffle-text">
             <template v-if="shuffling">Загрузка...</template>
-            <template v-else-if="total > 0">Перемешать ({{ total }})</template>
             <template v-else>Перемешать</template>
           </span>
         </button>
@@ -590,6 +590,12 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+@media (max-width: 767px) {
+  .toolbar-title {
+    display: none;
+  }
+}
+
 .toolbar-back-btn {
   display: inline-flex;
   align-items: center;
@@ -629,6 +635,14 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+.toolbar-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text-2, #b0b0b0);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 @media (min-width: 1024px) {
   .toolbar-heading {
     font-size: 24px;
@@ -648,7 +662,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   min-width: auto;
-  padding: 0 16px;
+  padding: 0 14px;
   justify-content: center;
   flex-shrink: 0;
 }

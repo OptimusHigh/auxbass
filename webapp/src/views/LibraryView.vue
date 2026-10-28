@@ -36,7 +36,7 @@
             </h2>
             <div class="section-actions">
               <button class="section-link" @click="setTab('tracks')">
-                Все {{ totalTracksCount }} <ChevronRight :size="14" />
+                Все <ChevronRight :size="14" />
               </button>
             </div>
           </div>
@@ -52,29 +52,9 @@
               <Shuffle v-else :size="16" class="shuffle-icon" />
               <span class="shuffle-text">
                 <template v-if="shuffling">Загрузка...</template>
-                <template v-else-if="totalTracksCount > 0">Перемешать ({{ totalTracksCount }})</template>
                 <template v-else>Перемешать</template>
               </span>
             </button>
-
-            <button
-              class="import-btn"
-              @click="tasksStore.openImportModal()"
-              title="Импорт музыки из SoundCloud / Spotify"
-            >
-              <CloudDownload :size="16" class="import-icon" />
-              <span class="import-text">Импорт</span>
-            </button>
-
-            <ExpandableSearch
-              v-model="searchQuery"
-              v-model:open="isOverviewSearchOpen"
-              placeholder="Название или исполнитель..."
-              title="Поиск по медиатеке"
-              class="overview-search"
-              @input="onOverviewSearchInput"
-              @clear="handleClearSearch"
-            />
           </div>
 
           <!-- Recent Tracks Preview -->
@@ -109,7 +89,7 @@
               class="view-all-tracks-btn"
               @click="setTab('tracks')"
             >
-              <span>Показать все треки ({{ totalTracksCount }})</span>
+              <span>Показать все треки</span>
               <ChevronRight :size="16" />
             </button>
           </div>
@@ -384,16 +364,14 @@ import LibraryAlbums from '@/components/library/LibraryAlbums.vue'
 import LibraryArtists from '@/components/library/LibraryArtists.vue'
 import LibraryPlaylists from '@/components/library/LibraryPlaylists.vue'
 import TrackItem from '@/components/TrackItem.vue'
-import ExpandableSearch from '@/components/ui/ExpandableSearch.vue'
-import { 
-  Play, 
-  Music, 
-  Folder, 
-  Disc3, 
-  Shuffle, 
+import {
+  Play,
+  Music,
+  Folder,
+  Disc3,
+  Shuffle,
   ChevronRight,
   ChevronLeft,
-  CloudDownload
 } from 'lucide-vue-next'
 import { useHorizontalScroll } from '@/composables/useHorizontalScroll'
 
@@ -1101,49 +1079,19 @@ onUnmounted(() => {
   margin-bottom: 14px;
 }
 
-.overview-actions-bar .overview-search {
-  margin-left: auto;
-  flex-shrink: 0;
-}
-
-.import-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: #fff;
-  border-radius: 24px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
-}
-
-.import-btn:hover {
-  background: rgba(255, 85, 0, 0.15);
-  border-color: rgba(255, 85, 0, 0.4);
-  color: #ff7733;
-  transform: translateY(-1px);
-}
-
-.import-icon {
-  color: #ff5500;
-}
-
-
 .shuffle-all-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 20px;
+  padding: 0 14px;
+  height: 36px;
   background: linear-gradient(135deg, var(--c-accent, #1db954) 0%, #158a3e 100%);
   color: #000;
   border: none;
   border-radius: 24px;
   font-size: 14px;
   font-weight: 700;
+  white-space: nowrap;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
   box-shadow: 0 4px 14px rgba(29, 185, 84, 0.35);
