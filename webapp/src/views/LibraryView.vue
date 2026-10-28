@@ -23,6 +23,30 @@
       </div>
       <!-- Overview Dashboard View without search -->
       <div v-if="currentTabId === 'overview' && !debouncedQuery" class="overview-dashboard">
+        <!-- Desktop header (visible only >= 1024px) -->
+        <div v-if="isDesktop" class="overview-header">
+          <h1 class="overview-header-title">Медиатека</h1>
+          <div class="overview-header-actions">
+            <button
+              class="overview-import-btn"
+              @click="tasksStore.openImportModal()"
+              title="Импорт музыки из SoundCloud / Spotify"
+            >
+              <CloudDownload :size="16" class="import-icon" />
+              <span>Импорт</span>
+            </button>
+            <ExpandableSearch
+              v-model="searchQuery"
+              v-model:open="isOverviewSearchOpen"
+              placeholder="Название или исполнитель..."
+              title="Поиск по медиатеке"
+              class="overview-search"
+              @input="onOverviewSearchInput"
+              @clear="handleClearSearch"
+            />
+          </div>
+        </div>
+
         <!-- ─── Section 1: Все треки (Вся музыка) ─── -->
         <section class="library-section tracks-overview-section">
           <div class="section-header tracks-section-header">
@@ -35,26 +59,22 @@
               <span v-if="totalTracksCount > 0" class="section-title-count">{{ totalTracksCount }}</span>
             </h2>
             <div class="section-actions">
+              <button
+                class="shuffle-all-btn"
+                @click="handleShuffleAll"
+                :disabled="totalTracksCount === 0 || shuffling"
+              >
+                <div v-if="shuffling" class="spinner small"></div>
+                <Shuffle v-else :size="16" class="shuffle-icon" />
+                <span class="shuffle-text">
+                  <template v-if="shuffling">Загрузка...</template>
+                  <template v-else>Перемешать</template>
+                </span>
+              </button>
               <button class="section-link" @click="setTab('tracks')">
                 Все <ChevronRight :size="14" />
               </button>
             </div>
-          </div>
-
-          <!-- Shuffle Button Bar -->
-          <div class="overview-actions-bar">
-            <button
-              class="shuffle-all-btn"
-              @click="handleShuffleAll"
-              :disabled="totalTracksCount === 0 || shuffling"
-            >
-              <div v-if="shuffling" class="spinner small"></div>
-              <Shuffle v-else :size="16" class="shuffle-icon" />
-              <span class="shuffle-text">
-                <template v-if="shuffling">Загрузка...</template>
-                <template v-else>Перемешать</template>
-              </span>
-            </button>
           </div>
 
           <!-- Recent Tracks Preview -->
@@ -364,6 +384,7 @@ import LibraryAlbums from '@/components/library/LibraryAlbums.vue'
 import LibraryArtists from '@/components/library/LibraryArtists.vue'
 import LibraryPlaylists from '@/components/library/LibraryPlaylists.vue'
 import TrackItem from '@/components/TrackItem.vue'
+import ExpandableSearch from '@/components/ui/ExpandableSearch.vue'
 import {
   Play,
   Music,
@@ -372,6 +393,7 @@ import {
   Shuffle,
   ChevronRight,
   ChevronLeft,
+  CloudDownload,
 } from 'lucide-vue-next'
 import { useHorizontalScroll } from '@/composables/useHorizontalScroll'
 
@@ -384,6 +406,12 @@ const playerStore = usePlayerStore()
 const tasksStore = useTasksStore()
 const { openMenu } = useContextMenu()
 const { handleLikeTrack, handleDirectDownload, handleHdNotice } = useTrackActions()
+
+// Desktop detection (>= 1024px) for the overview page header
+const isDesktop = ref(window.innerWidth >= 1024)
+const onResize = () => {
+  isDesktop.value = window.innerWidth >= 1024
+}
 
 const handleImportFinished = () => {
   loadOverviewData(true)
@@ -736,6 +764,7 @@ onMounted(() => {
   applyRouteTab()
   applyRouteSearch()
   loadOverviewData(true)
+  window.addEventListener('resize', onResize)
   window.addEventListener('reset-view-state', handleResetState)
   window.addEventListener('app-search', handleAppSearch)
   window.addEventListener('playlist:changed', onPlaylistChanged)
@@ -752,6 +781,7 @@ onActivated(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', onResize)
   window.removeEventListener('reset-view-state', handleResetState)
   window.removeEventListener('app-search', handleAppSearch)
   window.removeEventListener('playlist:changed', onPlaylistChanged)
@@ -773,6 +803,72 @@ onUnmounted(() => {
 @media (min-width: 768px) {
   .library-view {
     padding: 0 0 32px var(--content-padding, 24px);
+  }
+}
+
+/* ─── Desktop Overview Header (>= 1024px) ─── */
+.overview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.overview-header-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--c-text-1, #fff);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.overview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.overview-import-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+}
+
+.overview-import-btn:hover {
+  background: rgba(255, 85, 0, 0.15);
+  border-color: rgba(255, 85, 0, 0.4);
+  color: #ff7733;
+}
+
+.overview-import-btn .import-icon {
+  color: #ff5500;
+  flex-shrink: 0;
+}
+
+/* ─── Overview Dashboard content spacing ─── */
+.overview-dashboard {
+  padding-top: 16px;
+}
+
+@media (min-width: 1024px) {
+  .overview-dashboard {
+    padding-top: 0;
   }
 }
 
@@ -1072,13 +1168,6 @@ onUnmounted(() => {
 }
 
 /* ─── Tracks Section ─── */
-.overview-actions-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
 .shuffle-all-btn {
   display: inline-flex;
   align-items: center;
