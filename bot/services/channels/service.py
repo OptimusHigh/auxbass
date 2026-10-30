@@ -557,14 +557,10 @@ class ChannelService:
                 if existing.status == ChannelMessageStatus.SENT:
                     logger.debug(f"Track {track_id} already sent to channel, skipping")
                     return True
-                if existing.status == ChannelMessageStatus.PENDING:
-                    # Another worker is handling this — skip to avoid double-send
-                    logger.debug(f"Track {track_id} already pending, skipping")
-                    return True
                 if existing.status == ChannelMessageStatus.FAILED and existing.retry_count >= MAX_RETRY_COUNT:
                     logger.warning(f"Track {track_id} exceeded max retries ({MAX_RETRY_COUNT})")
                     return False
-                # FAILED (retries left) or DELETED → reuse the record
+                # PENDING (e.g. restored from DB on startup), FAILED (retries left), or DELETED → reuse record
                 channel_message = existing
                 channel_message.status = ChannelMessageStatus.PENDING
                 channel_message.message_id = None

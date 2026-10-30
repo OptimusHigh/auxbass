@@ -770,12 +770,9 @@ export const usePlayerStore = defineStore('player', () => {
     // Same track → toggle
     if (currentTrack.value?.id === track.id) { toggle(); return }
 
-    // Known unavailable check
-    if (track.is_unavailable) {
-      console.warn(`[Play] Track "${track.title}" is marked unavailable`)
-      if (!isSkipping && onTrackUnavailableCallback) {
-        onTrackUnavailableCallback(track, 'Трек недоступен в Telegram', false)
-      }
+    // Known unavailable check: skip during automated skipping, but allow manual attempt (auto-healing)
+    if (track.is_unavailable && isSkipping) {
+      console.warn(`[Play] Skipping marked unavailable track during sequence: "${track.title}"`)
       setTimeout(() => next(), 50)
       return
     }
@@ -808,6 +805,9 @@ export const usePlayerStore = defineStore('player', () => {
     try {
       const source = await resolveAudioSource(track, playerApi.getStreamUrl.bind(playerApi))
       await applySource(track, source)
+      if (track.is_unavailable) {
+        track.is_unavailable = false
+      }
       loading.value = false
       isChangingTrack.value = false
       nextTrackPreloaded.value = null
@@ -888,7 +888,23 @@ export const usePlayerStore = defineStore('player', () => {
       }
 
       if (statusCode === 503) {
-        const detailStr = typeof detail === 'string' ? detail : ''
+        const rawDetail = error.response?.data?.detail
+        const isObjDetail = typeof rawDetail === 'object' && rawDetail !== null
+        const errCode = isObjDetail ? rawDetail.code : error.response?.data?.code
+        const detailStr = (isObjDetail ? rawDetail.message : (typeof detail === 'string' ? detail : ''))
+
+        // Transient telegram network/connection error: DO NOT mark track as unavailable!
+        if (errCode === 'telegram_network_error' || detailStr.includes('ошибка связи') || detailStr.includes('Timeout')) {
+          isPlaying.value = false
+          loading.value = false
+          lastError.value = { type: 'network_error', track, message: detailStr || 'Ошибка связи с серверами Telegram' }
+          window.dispatchEvent(new CustomEvent('player:error', { detail: lastError.value }))
+          if (onTrackUnavailableCallback && !isSkipping) {
+            onTrackUnavailableCallback(track, detailStr || 'Ошибка связи с серверами Telegram', false)
+          }
+          return
+        }
+
         const isLargeFile = detailStr.includes('слишком большой') || (track.file_size && track.file_size > 20 * 1024 * 1024)
         const isHdFormat = detailStr.includes('высокого качества') || detailStr.includes('HD') || detailStr.includes('FLAC')
         lastError.value = { type: isLargeFile ? 'too_large' : isHdFormat ? 'hd_only' : 'unavailable', track, message: detail }

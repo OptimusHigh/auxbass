@@ -301,6 +301,11 @@ async def find_hd_alternative(track: Track, db: AsyncSession) -> Optional[Track]
     return None
 
 
+class TelegramConnectionError(Exception):
+    """Raised when Telegram Bot API is temporarily unreachable or returns 5xx/429."""
+    pass
+
+
 async def get_telegram_file_path(file_id: str) -> Optional[str]:
     """
     Get file path from Telegram (not full URL).
@@ -327,6 +332,8 @@ async def get_telegram_file_path(file_id: str) -> Optional[str]:
         async with session.get(api_url, params={"file_id": file_id}) as resp:
             if resp.status != 200:
                 logger.debug(f"Telegram getFile returned status={resp.status} for file_id={file_id[:20]}... (will refresh from channel)")
+                if resp.status in (500, 502, 503, 504, 429):
+                    raise TelegramConnectionError(f"Telegram server error: HTTP {resp.status}")
                 return None
             
             data = await resp.json()
@@ -370,9 +377,11 @@ async def get_telegram_file_path(file_id: str) -> Optional[str]:
             logger.info(f"Got file path: {file_path}")
             
             return file_path
+    except TelegramConnectionError:
+        raise
     except aiohttp.ClientError as e:
         logger.error(f"HTTP error getting file path: {e}")
-        return None
+        raise TelegramConnectionError(f"HTTP error getting file path: {e}")
 
 
 async def refresh_file_id_from_channel(
@@ -573,7 +582,17 @@ async def get_stream_url(
                 )
     
     # Verify file is accessible (pre-cache the path)
-    file_path = await get_telegram_file_path(track.file_id)
+    try:
+        file_path = await get_telegram_file_path(track.file_id)
+    except TelegramConnectionError as e:
+        logger.warning(f"[Stream Request] Telegram connection error for track {track_id}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Временная ошибка связи с серверами Telegram. Попробуйте еще раз через несколько секунд.",
+                "code": "telegram_network_error",
+            }
+        )
     
     if not file_path:
         # Check if file exceeds max streamable limit
@@ -597,13 +616,19 @@ async def get_stream_url(
             logger.info(f"[Stream Request] Track {track_id} file_id refreshed successfully!")
             
             # Try again with new file_id
-            file_path = await get_telegram_file_path(new_file_id)
+            try:
+                file_path = await get_telegram_file_path(new_file_id)
+            except TelegramConnectionError:
+                file_path = None
         
         if not file_path:
             # If current track file_id is dead, let's see if another copy exists in DB
             alt_track = await find_streamable_alternative(original_track, db)
             if alt_track and alt_track.id != track.id:
-                alt_path = await get_telegram_file_path(alt_track.file_id)
+                try:
+                    alt_path = await get_telegram_file_path(alt_track.file_id)
+                except TelegramConnectionError:
+                    alt_path = None
                 if alt_path:
                     logger.info(
                         f"[Stream Request] 🔄 Auto-substitution for stale track {track_id} -> track {alt_track.id}"
@@ -634,6 +659,17 @@ async def get_stream_url(
                     logger.warning(
                         f"[Stream Request] Track {track_id} channel '{ch_title}' is inaccessible (uploaded by other user {original_track.uploader_id})"
                     )
+            elif err_code in ("network_error", "timeout", "flood_wait"):
+                logger.warning(
+                    f"[Stream Request] Transient network error ({err_code}) for track {track_id}, skipping mark_unavailable"
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "message": "Временная ошибка связи с серверами Telegram. Попробуйте еще раз через несколько секунд.",
+                        "code": "telegram_network_error",
+                    }
+                )
 
             # Still no luck - mark track as unavailable
             if not track.is_unavailable:
@@ -939,6 +975,9 @@ async def get_batch_stream_urls(
                 return file_path, new_file_id, False, None
             
             return None, None, False, err_code
+        except TelegramConnectionError as e:
+            logger.debug(f"[Batch] Telegram connection error for track {track.id}: {e}")
+            return None, None, False, "network_error"
         except Exception as e:
             logger.debug(f"Failed to get file path for track {track.id}: {e}")
             return None, None, False, None

@@ -1595,6 +1595,10 @@ async def mark_unavailable(
         logger.info(f"mark_unavailable auto-healed track {track_id} from channel")
         return {"status": "auto_healed", "track_id": track_id}
 
+    if err_code in ("network_error", "timeout", "flood_wait"):
+        logger.warning(f"mark_unavailable: ignoring request for track {track_id} due to transient error {err_code}")
+        return {"status": "ignored_transient_error", "track_id": track_id}
+
     # Only mark if not already unavailable
     if not track.is_unavailable:
         track.is_unavailable = True
