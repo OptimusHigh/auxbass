@@ -831,40 +831,107 @@ async def stream_audio(
     logger.info(f"[Stream Start] track_id={track_id}, expected_bytes={expected_bytes}, range={range or 'full'}")
     
     async def stream_generator():
-        """Stream audio from already-opened Telegram response with diagnostic logging"""
+        """Stream audio from Telegram response with transparent auto-reconnect on disconnects"""
         bytes_sent = 0
         chunk_count = 0
+        consecutive_retries = 0
+        max_consecutive_retries = 5
+        current_response = telegram_response
+        current_telegram_url = telegram_url
+        
         try:
-            async for chunk in telegram_response.content.iter_chunked(64 * 1024):
-                bytes_sent += len(chunk)
-                chunk_count += 1
-                yield chunk
+            while True:
+                if current_response is None:
+                    # Attempt to reconnect to Telegram
+                    if consecutive_retries >= max_consecutive_retries:
+                        elapsed = time.time() - stream_start_time
+                        logger.error(
+                            f"[Stream Error] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, "
+                            f"elapsed={elapsed:.2f}s, reconnect retries exhausted"
+                        )
+                        break
+                    
+                    consecutive_retries += 1
+                    current_offset = start_byte + bytes_sent
+                    await asyncio.sleep(min(0.5 * consecutive_retries, 2.0))
+                    
+                    resume_headers = {}
+                    if end_byte:
+                        resume_headers["Range"] = f"bytes={current_offset}-{end_byte}"
+                    else:
+                        resume_headers["Range"] = f"bytes={current_offset}-"
+                    
+                    try:
+                        new_resp = await session.get(current_telegram_url, headers=resume_headers)
+                        if new_resp.status in (400, 401, 404):
+                            # Telegram file_path may have expired (e.g. mix streaming > 1 hour)
+                            logger.info(f"[Stream Reconnect] Refreshing file path for track_id={track_id}...")
+                            await new_resp.release()
+                            _file_path_cache.pop(track.file_id, None)
+                            new_file_path = await get_telegram_file_path(track.file_id)
+                            if new_file_path:
+                                current_telegram_url = f"{base_url}/file/bot{settings.bot_token}/{new_file_path}"
+                                new_resp = await session.get(current_telegram_url, headers=resume_headers)
+                        
+                        if new_resp.status not in (200, 206):
+                            logger.error(f"[Stream Reconnect Failed] HTTP status={new_resp.status} for track_id={track_id}")
+                            await new_resp.release()
+                            break
+                        
+                        current_response = new_resp
+                    except Exception as conn_err:
+                        logger.error(f"[Stream Reconnect Conn Error] track_id={track_id}: {conn_err}")
+                        continue
+                
+                try:
+                    async for chunk in current_response.content.iter_chunked(64 * 1024):
+                        bytes_sent += len(chunk)
+                        chunk_count += 1
+                        consecutive_retries = 0  # Reset retry counter on successful read
+                        yield chunk
+                    
+                    # Completed reading from current_response
+                    if expected_bytes > 0 and bytes_sent < expected_bytes:
+                        raise aiohttp.ClientPayloadError(f"Premature EOF: received {bytes_sent}/{expected_bytes} bytes")
+                    
+                    # All expected bytes delivered
+                    break
+                    
+                except asyncio.CancelledError:
+                    # Client disconnected (normal - seek, track change, pause, etc.)
+                    elapsed = time.time() - stream_start_time
+                    logger.info(f"[Stream Cancelled] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, elapsed={elapsed:.2f}s (client disconnected)")
+                    raise
+                    
+                except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError, OSError) as e:
+                    elapsed = time.time() - stream_start_time
+                    if expected_bytes > 0 and bytes_sent >= expected_bytes:
+                        break
+                    
+                    current_offset = start_byte + bytes_sent
+                    logger.warning(
+                        f"[Stream Reconnecting] track_id={track_id}, offset={current_offset}, "
+                        f"sent={bytes_sent}/{expected_bytes}, elapsed={elapsed:.2f}s, error={e} ({type(e).__name__}), retry={consecutive_retries + 1}/{max_consecutive_retries}"
+                    )
+                    
+                    if current_response is not None:
+                        await current_response.release()
+                        current_response = None
+                    # Next iteration of while True will reconnect at current_offset
+                    
+                except Exception as e:
+                    elapsed = time.time() - stream_start_time
+                    logger.error(f"[Stream Error] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, elapsed={elapsed:.2f}s, error={type(e).__name__}: {e}")
+                    raise
             
             # Stream completed successfully
             elapsed = time.time() - stream_start_time
             speed_kbps = (bytes_sent / 1024) / elapsed if elapsed > 0 else 0
-            logger.info(f"[Stream Complete] track_id={track_id}, bytes_sent={bytes_sent}, chunks={chunk_count}, elapsed={elapsed:.2f}s, speed={speed_kbps:.1f}KB/s")
-            
-        except asyncio.CancelledError:
-            # Client disconnected (normal - seek, track change, etc.)
-            elapsed = time.time() - stream_start_time
-            logger.info(f"[Stream Cancelled] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, elapsed={elapsed:.2f}s (client disconnected)")
-            raise
-            
-        except aiohttp.ClientPayloadError as e:
-            # Telegram closed connection unexpectedly
-            elapsed = time.time() - stream_start_time
-            logger.error(f"[Stream Error] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, elapsed={elapsed:.2f}s, error=ClientPayloadError: {e}")
-            raise
-            
-        except Exception as e:
-            # Any other error
-            elapsed = time.time() - stream_start_time
-            logger.error(f"[Stream Error] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, elapsed={elapsed:.2f}s, error={type(e).__name__}: {e}")
-            raise
+            logger.info(f"[Stream Complete] track_id={track_id}, bytes_sent={bytes_sent}/{expected_bytes}, chunks={chunk_count}, elapsed={elapsed:.2f}s, speed={speed_kbps:.1f}KB/s")
             
         finally:
-            await telegram_response.release()
+            if current_response is not None:
+                await current_response.release()
     
     # Build response headers (CORS handled by middleware — no manual override)
     response_headers = {
