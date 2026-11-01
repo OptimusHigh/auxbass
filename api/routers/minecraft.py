@@ -465,9 +465,11 @@ async def get_sync_manifest(
     deleted_track_ids = get_deleted_track_ids()
 
     deltas = []
+    tracks_list = []
     for tr in all_tracks:
         if tr.id in deleted_track_ids:
             continue  # deleted by author, do not serve
+
         if tr.id not in base_track_ids:
             sha1 = get_cached_sha1(tr.id)
             if not sha1:
@@ -482,7 +484,7 @@ async def get_sync_manifest(
                     logger.warning(f"[minecraft] Skipping unbuildable delta track {tr.id} ({tr.title})")
                     continue
             if sha1:
-                deltas.append({
+                item = {
                     "track_id": tr.id,
                     "title": tr.title or f"Track {tr.id}",
                     "artist": tr.artist,
@@ -492,11 +494,26 @@ async def get_sync_manifest(
                     "pack_uuid": str(pack_uuid_for_track(tr.id)),
                     "pack_url": f"{base_url}/api/minecraft/packs/{tr.id}.zip",
                     "sha1": sha1,
-                })
+                }
+                deltas.append(item)
+                tracks_list.append(item)
+        else:
+            tracks_list.append({
+                "track_id": tr.id,
+                "title": tr.title or f"Track {tr.id}",
+                "artist": tr.artist,
+                "uploader_name": _uploader_name(tr),
+                "duration": tr.duration,
+                "file_id": tr.file_id,
+                "pack_uuid": str(base_pack_uuid()),
+                "pack_url": f"{base_url}/api/minecraft/packs/base.zip",
+                "sha1": base_sha1 or "",
+            })
 
     return {
         "base_pack": base_pack_info,
         "deltas": deltas,
+        "tracks": tracks_list,
         "deleted_track_ids": sorted(deleted_track_ids),
         "total_tracks": len(all_tracks),
     }
