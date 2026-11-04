@@ -334,6 +334,11 @@ const recordFailedRequest = (error) => {
   }
 
   const status = error?.response?.status
+  // Ignore track-specific unstreamable/HD 503 errors from player stream
+  const reqUrl = error?.config?.url || ''
+  if (status === 503 && reqUrl.includes('/api/player/stream/')) {
+    return
+  }
   if (status === 502 || status === 503 || status === 504) {
     consecutiveFailures++
     if (consecutiveFailures >= 2) {

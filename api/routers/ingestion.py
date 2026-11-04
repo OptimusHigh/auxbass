@@ -528,14 +528,14 @@ async def quick_import_track(
     existing_chunk = None
 
     if req.title and req.artist:
-        # Check if full track already exists
+        # Check if streamable full track already exists
         existing_full = await _find_existing_track(
-            req.title, req.artist, req.duration, session=db, allow_chunk=False, url=req.url
+            req.title, req.artist, req.duration, session=db, allow_chunk=False, url=req.url, require_streamable=True
         )
         if not existing_full:
             # Check if 30s preview chunk already exists
             existing_chunk = await _find_existing_track(
-                req.title, req.artist, req.duration, session=db, allow_chunk=True, url=req.url
+                req.title, req.artist, req.duration, session=db, allow_chunk=True, url=req.url, require_streamable=True
             )
 
     # Case A: If user requested preview_only and we already have full track or chunk in DB -> instant response!

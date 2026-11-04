@@ -41,6 +41,7 @@ from shared.matching import (
     is_bogus_album_name,
     sanitize_album_name,
 )
+from shared.utils import is_track_streamable
 
 from bot.services.tracks import track_service
 from bot.services.albums import album_service
@@ -73,10 +74,16 @@ def _score_candidate(
     robust_title: str,
     duration: Optional[int],
     allow_chunk: bool = False,
+    require_streamable: bool = False,
 ) -> int:
     is_cand_chunk = bool(getattr(t, "is_chunk", False))
     # Chunks should never be matched when searching for full tracks
     if is_cand_chunk and not allow_chunk:
+        return -1
+
+    # If streamable format required (e.g. Ingestion downloading streamable MP3 copy),
+    # unstreamable tracks (HD FLAC/WAV or files exceeding bot stream limit) cannot serve as streamable duplicates
+    if require_streamable and not is_track_streamable(t):
         return -1
 
     t_clean_title, t_clean_artist = clean_track_metadata(t.title, t.artist)
@@ -126,6 +133,10 @@ def _score_candidate(
     else:
         return -1
 
+    # Prefer streamable tracks over heavy/HD tracks
+    if is_track_streamable(t):
+        score += 5
+
     # Prefer full tracks over chunks
     if is_cand_chunk:
         score = max(1, score - 15)
@@ -142,12 +153,14 @@ async def _find_existing_track(
     session: Optional[Any] = None,
     allow_chunk: bool = False,
     url: Optional[str] = None,
+    require_streamable: bool = False,
 ) -> Optional[Track]:
     """
     Check if track with matching title & artist (or exact source URL) already exists in global library.
     Uses multi-level tolerant recognition (exact -> normalized -> version-stripped -> fuzzy)
     with strict duration tolerance (<= 7s) to prevent duplicate downloads and channel spam.
     When allow_chunk=False (default), 30s preview chunks are never returned.
+    When require_streamable=True, unstreamable tracks (HD FLAC/WAV or >20MB) are ignored so streamable MP3 copies can be imported.
     """
     clean_title, clean_artist = clean_track_metadata(title, artist)
     norm_artist = normalize_artist(clean_artist)
@@ -170,6 +183,8 @@ async def _find_existing_track(
                 if not allow_chunk and duration and duration > 45:
                     if (url_track.duration and url_track.duration <= 35) or (url_track.file_size and url_track.file_size < 1000000 and (url_track.duration or 0) <= 45):
                         url_track = None
+                if url_track and require_streamable and not is_track_streamable(url_track):
+                    url_track = None
                 if url_track:
                     return url_track
 
@@ -211,7 +226,10 @@ async def _find_existing_track(
         best_score = -1
 
         for t in candidates:
-            score = _score_candidate(t, clean_title, clean_artist, norm_title, norm_artist, robust_title, duration, allow_chunk=allow_chunk)
+            score = _score_candidate(
+                t, clean_title, clean_artist, norm_title, norm_artist, robust_title, duration,
+                allow_chunk=allow_chunk, require_streamable=require_streamable,
+            )
             if score > best_score:
                 best_score = score
                 best_candidate = t
@@ -227,6 +245,7 @@ async def _find_existing_track(
 async def _find_existing_tracks_batch(
     items: List[Any],
     session: Optional[Any] = None,
+    require_streamable: bool = False,
 ) -> List[Optional[Track]]:
     """
     Batch find existing tracks for a list of items using a single indexed query.
@@ -272,7 +291,10 @@ async def _find_existing_tracks_batch(
             best_candidate = None
             best_score = -1
             for cand in candidates:
-                score = _score_candidate(cand, clean_title, clean_artist, n_tit, n_art, r_tit, dur)
+                score = _score_candidate(
+                    cand, clean_title, clean_artist, n_tit, n_art, r_tit, dur,
+                    require_streamable=require_streamable,
+                )
                 if score > best_score:
                     best_score = score
                     best_candidate = cand
@@ -280,7 +302,9 @@ async def _find_existing_tracks_batch(
             if best_candidate:
                 results.append(best_candidate)
             else:
-                found = await _find_existing_track(clean_title, clean_artist, dur, session=s)
+                found = await _find_existing_track(
+                    clean_title, clean_artist, dur, session=s, require_streamable=require_streamable
+                )
                 results.append(found)
 
         return results
@@ -476,9 +500,14 @@ class IngestionPipeline:
                         track_meta.album = None
 
                 try:
-                    # A. Deduplication check: exists globally?
+                    # A. Deduplication check: exists globally as a streamable track?
                     existing = await _find_existing_track(
-                        track_meta.title, track_meta.artist, track_meta.duration
+                        track_meta.title,
+                        track_meta.artist,
+                        track_meta.duration,
+                        allow_chunk=False,
+                        url=track_meta.url,
+                        require_streamable=True,
                     )
 
                     if existing:

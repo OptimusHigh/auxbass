@@ -13,54 +13,18 @@ from api.schemas.tracks import TrackResponse
 from api.schemas.albums import AlbumResponse
 
 
-# ============== Streaming Format Constants ==============
+# ============== Streaming Format Constants & Helpers ==============
 
-# MIME types that can be streamed in web player (standard audio player compatible)
-STREAMABLE_MIME_TYPES = {
-    "audio/mpeg",      # MP3
-    "audio/mp3",       # MP3 (alternative)
-    "audio/ogg",       # OGG
-    "audio/aac",       # AAC
-    "audio/mp4",       # M4A
-    "audio/x-m4a",     # M4A (alternative)
-}
-
-# HD/Lossless MIME types that cannot be streamed (file too large or format unsupported)
-HD_MIME_TYPES = {
-    "audio/flac",      # FLAC
-    "audio/x-flac",    # FLAC (alternative)
-    "audio/wav",       # WAV
-    "audio/x-wav",     # WAV (alternative)
-    "audio/aiff",      # AIFF
-    "audio/x-aiff",    # AIFF (alternative)
-}
-
-def get_max_streamable_size() -> int:
-    from shared.config import get_settings
-    s = get_settings()
-    if s.telegram_api_url and not s.telegram_api_url.startswith("https://api.telegram.org"):
-        return 2000 * 1024 * 1024
-    return 20 * 1024 * 1024
+from shared.utils import (
+    STREAMABLE_MIME_TYPES,
+    HD_MIME_TYPES,
+    get_max_streamable_size,
+    is_hd_format,
+    is_streamable_format as is_streamable,
+    is_track_streamable,
+)
 
 MAX_STREAMABLE_SIZE_BYTES = 2000 * 1024 * 1024
-
-
-# ============== Streaming Format Helpers ==============
-
-def is_streamable(mime_type: Optional[str], file_size: Optional[int] = None) -> bool:
-    """Check if MIME type and file size are supported for direct streaming in web browser."""
-    if file_size is not None and file_size > get_max_streamable_size():
-        return False
-    if not mime_type:
-        return True  # Assume streamable if mime_type unknown (legacy tracks)
-    return mime_type.lower() in STREAMABLE_MIME_TYPES
-
-
-def is_hd_format(mime_type: Optional[str]) -> bool:
-    """Check if track is HD/lossless format"""
-    if not mime_type:
-        return False
-    return mime_type.lower() in HD_MIME_TYPES
 
 
 def streamable_track_filter():

@@ -5,7 +5,7 @@ This module re-exports functions from matching.py for backward compatibility
 and provides formatting utilities.
 """
 import re
-from typing import Optional, List
+from typing import Optional, List, Any
 
 # Re-export from matching module for backward compatibility
 from .matching import (
@@ -175,3 +175,69 @@ def truncate_text(text: str, max_length: int = 100, suffix: str = "...") -> str:
         return text or ""
     
     return text[:max_length - len(suffix)] + suffix
+
+
+# ============== Streaming Format Constants & Helpers ==============
+
+STREAMABLE_MIME_TYPES = {
+    "audio/mpeg",      # MP3
+    "audio/mp3",       # MP3 (alternative)
+    "audio/ogg",       # OGG
+    "audio/aac",       # AAC
+    "audio/mp4",       # M4A
+    "audio/x-m4a",     # M4A (alternative)
+}
+
+HD_MIME_TYPES = {
+    "audio/flac",      # FLAC
+    "audio/x-flac",    # FLAC (alternative)
+    "audio/wav",       # WAV
+    "audio/x-wav",     # WAV (alternative)
+    "audio/aiff",      # AIFF
+    "audio/x-aiff",    # AIFF (alternative)
+    "audio/alac",      # ALAC
+    "audio/x-alac",    # ALAC (alternative)
+}
+
+def get_max_streamable_size() -> int:
+    """Return max streamable file size in bytes based on Telegram Bot API mode (20MB cloud, 2GB local)."""
+    try:
+        from shared.config import get_settings
+        s = get_settings()
+        if s.telegram_api_url and not s.telegram_api_url.startswith("https://api.telegram.org"):
+            return 2000 * 1024 * 1024
+    except Exception:
+        pass
+    return 20 * 1024 * 1024
+
+def is_hd_format(mime_type: Optional[str]) -> bool:
+    """Check if track MIME type is HD/lossless format (FLAC, WAV, AIFF, ALAC)."""
+    if not mime_type:
+        return False
+    return mime_type.lower() in HD_MIME_TYPES
+
+def is_streamable_format(mime_type: Optional[str], file_size: Optional[int] = None) -> bool:
+    """Check if MIME type and file size are supported for direct streaming in web browser."""
+    max_size = get_max_streamable_size()
+    if file_size is not None and file_size > max_size:
+        return False
+    if not mime_type:
+        return True  # Assume streamable if mime_type unknown (legacy tracks)
+    return mime_type.lower() in STREAMABLE_MIME_TYPES
+
+def is_track_streamable(track: Any) -> bool:
+    """Check if Track object is directly streamable in web browser."""
+    if not track:
+        return False
+    if getattr(track, "is_unavailable", False):
+        return False
+    mime = getattr(track, "mime_type", None)
+    if is_hd_format(mime):
+        return False
+    file_size = getattr(track, "file_size", None)
+    if file_size and file_size > get_max_streamable_size():
+        return False
+    if mime and mime.lower() not in STREAMABLE_MIME_TYPES:
+        return False
+    return True
+

@@ -1409,6 +1409,75 @@ def test_score_candidate_chunk_filtering():
     assert score_for_preview > 0
 
 
+def test_score_candidate_hd_filtering_when_streamable_required():
+    """Test that candidate scoring rejects HD/unstreamable tracks when require_streamable=True, enabling MP3 ingestion."""
+    from bot.services.ingestion.pipeline import _score_candidate
+    from shared.models import Track
+
+    # HD FLAC track
+    flac_track = Track(
+        id=2129,
+        title="Motorola",
+        artist="Yung Lean",
+        duration=111,
+        mime_type="audio/flac",
+        file_size=23345127,
+        is_chunk=False,
+        file_id="flac_id",
+        file_unique_id="flac_uid",
+    )
+
+    # When streamable copy is required (ingestion downloading MP3 copy): HD track must NOT match
+    score_streamable = _score_candidate(
+        t=flac_track,
+        clean_title="Motorola",
+        clean_artist="Yung Lean",
+        norm_title="motorola",
+        norm_artist="yung lean",
+        robust_title="motorola",
+        duration=111,
+        require_streamable=True,
+    )
+    assert score_streamable == -1, "HD track must be rejected when streamable format is required"
+
+    # When general lookup (not requiring streamable): HD track matches
+    score_general = _score_candidate(
+        t=flac_track,
+        clean_title="Motorola",
+        clean_artist="Yung Lean",
+        norm_title="motorola",
+        norm_artist="yung lean",
+        robust_title="motorola",
+        duration=111,
+        require_streamable=False,
+    )
+    assert score_general > 0, "HD track should match in general lookup"
+
+    # Regular MP3 track matches both
+    mp3_track = Track(
+        id=3000,
+        title="Motorola",
+        artist="Yung Lean",
+        duration=111,
+        mime_type="audio/mpeg",
+        file_size=4500000,
+        is_chunk=False,
+        file_id="mp3_id",
+        file_unique_id="mp3_uid",
+    )
+    assert _score_candidate(
+        t=mp3_track,
+        clean_title="Motorola",
+        clean_artist="Yung Lean",
+        norm_title="motorola",
+        norm_artist="yung lean",
+        robust_title="motorola",
+        duration=111,
+        require_streamable=True,
+    ) > 0
+
+
+
 
 
 
